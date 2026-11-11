@@ -1,0 +1,9 @@
+node_modules/
+package-lock.json
+.lib-backup/
+*.log
+.DS_Store
+
+# 开发工程文件：docs 五级文档框架不进项目 git 仓库
+docs/
+AGENTS.md

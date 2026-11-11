@@ -1,0 +1,330 @@
+# @zhangfengshun/dsh-remote-ssh
+
+[English](./README_EN.md) | 中文
+
+类 **VSCode Remote-SSH** 的 **DSH** 插件：通过 SSH 连接远程超算 / 服务器，在 DSH 内置「文件」「终端」页签中直接操作远程文件和终端。
+
+**目录**：[功能](#功能) · [截图](#截图) · [安装](#安装) · [使用](#使用) · [代码示例](#代码示例) · [模型工具](#模型工具) · [命令超时与恢复](#命令超时与恢复) · [兼容性](#兼容性) · [故障排查](#故障排查) · [原理](#原理) · [缓存与一致性](#缓存与一致性) · [许可证](#许可证)
+
+## 功能
+
+| 能力 | 说明 |
+| --- | --- |
+| 🔌 SSH 连接 | 密钥 / 密码认证，ProxyJump 跳板机，`~/.ssh/config` 一键导入 |
+| 📂 远程文件 | 内置「文件」页签直接 SSH 读写远程文件，无需同步 |
+| 💻 远程终端 | 内置「终端」页签自动检测远程工作区，SSH 交互式终端，**落在工作区对应的远程目录**（与 VSCode Remote-SSH 一致） |
+| 🌐 远程工作区 | 选择远程目录创建原生工作区，一键进入远程环境 |
+| 🤖 模型工具 | 13 个 `remote_ssh_*` 工具，会话感知免填连接参数；命令级超时 + `remote_ssh_kill` 兜底恢复 |
+| 🗂️ `@` 引用补全 | 远程工作区会话里 `@` 补全列**远端**文件（git 仓库走 `git ls-files`，实测 0.1s；非 git 用有界 `find`；索引缓存 + 900ms 查询预算，超时降级不卡输入框） |
+| ⚡ 打开提速 | 单往返合并读 + raw 文本快路径 + 结果缓存（LRU + 5s TTL）：首开 ≈**1.31×**，TTL 内重复打开 **0 往返**，过期复验 **≈5×**（真实超算实测）；`remote_ssh_exec` 连接复用 **≈15×** |
+
+## 截图
+
+**设置 → 远程连接**：连接配置（密钥 / 密码 / ProxyJump 跳板机）· 连接测试 · 从 `~/.ssh/config` 一键导入
+
+<p align="center"><img src="assets/settings-remote-connections.png" width="420" alt="设置：远程连接"></p>
+
+**内置「文件」页签**：直接浏览远程主机文件（右侧文件树即远程目录，编辑保存直写远程）
+
+<p align="center"><img src="assets/remote-files-tab.webp" width="820" alt="内置文件页签直接浏览远程文件"></p>
+
+**内置「终端」页签**：自动 SSH 到远程超算（图为 SLURM 作业调度环境）；左侧会话即模型免填调用 `remote_ssh_*` 工具
+
+<p align="center"><img src="assets/remote-terminal.webp" width="820" alt="内置终端页签自动 SSH 远程超算"></p>
+
+## 安装
+
+**前置要求**
+
+| 项 | 要求 |
+| --- | --- |
+| DSH | ≥ 0.1.5-rc.1，**含 0.2.0-rc.1**（最新官方线；0.1.2 稳定线请用 v0.18.1 时代的插件版本）。插件声明的 peer 范围显式列出每条已验证版本线，因此新版 harness 的兼容性门（见[安装](#安装)）不会拦住它 |
+| dsh-better-sidebar | ≥ 0.15（本插件依赖其 `/sidebar/api/` 文件 API 与 0.24 的 `open.external`「打开方式」端点；0.23 起文件树改为批量 `fs.trees` 并新增 `fs.mkdir`，**2.4.18 起已适配**）。**可以只装本插件**：2.4.18 起未安装它时不再卡住 web boot（见下方说明），但「文件」页签的远程读写与编辑器页签也随之不可用 |
+| 本机 SSH 客户端 | Windows：系统自带 OpenSSH（`%SystemRoot%\System32\OpenSSH\ssh.exe`）；Linux/macOS：openssh-client |
+| 远程主机 | 任意标准 sshd（超算 / 服务器 / 跳板机均可） |
+
+**一条命令安装**（无需 token、API Key 或额外配置）：
+
+```bash
+dsh plugin --profile <name> add @zhangfengshun/dsh-remote-ssh@2.4.45
+```
+
+安装后**重启 DSH**。`@zhangfengshun/dsh-remote-ssh` 必须在 bundles 列表中排在 `dsh-better-sidebar` **之后**。
+
+> **只装本插件、不装 `dsh-better-sidebar`（或它加载失败）会怎样？** 2.4.18 起可以正常启动：客户端只把内核服务（`slots`/`locale`）声明为硬依赖，better-sidebar 改走**子 fiber 软注入** —— 装了才注册远程文件编辑器页签，没装就静默降级。此时**能用**：设置页「远程连接」（SSH 连接与远程工作区）、模型工具（`remote_ssh_*`）、远程终端集成、`@` 远程文件补全；**不能用**：「文件」页签的远程读写与编辑器页签 —— 那套 `/sidebar/api/fs.*` 通道属于 better-sidebar（内核原生侧边栏走的是它自己的 `/api/*`，本插件不接管）。1.0.0 之前的旧版插件在这里会**永久 pending**，前端直接报 `web boot: 1 entry did not activate` / `pending (waiting for service: betterSidebar)`（issue [#18](https://github.com/ZhangFengshun/dsh-remote-ssh/issues/18)）。另外 better-sidebar 缺席时宿主会打一条 `patch: entry "better-sidebar" not found` 的 warn —— `dsh-app-boot` 对缺席的 patch 目标无条件告警，**属正常，可忽略**。
+
+> **DSH 0.2.0-rc.1 起：装不上 / 插件列表里不出现？** 新版 harness 会按插件自己声明的 **DSH peer 版本范围**判定兼容性，范围覆盖不到当前运行时版本时会**拒绝安装/激活**（提示 `Plugin … is incompatible with dsh <版本>`），并在插件管理器里给你一个「接受风险」的逐版本豁免。2.4.16 起本插件的 peer 范围已显式列出所有已验证版本线（`^0.1.0-rc.6 || ^0.1.5-rc.1 || ^0.1.7-rc.2 || ^0.2.0-rc.1`），**不需要**任何豁免即可安装。若你用的是更早的插件版本，请升级而不是点"接受风险"。（判定是严格 semver：预发布运行时只被"版本线显式列出"的范围覆盖 —— 这也是为什么范围里要逐条列 `0.1.5-rc.1` 这类版本。）
+
+卸载：
+
+```bash
+dsh plugin --profile <name> remove @zhangfengshun/dsh-remote-ssh
+```
+
+> ⚠️ **dsh-better-sidebar 版本兼容性（2026-09 实测）**：`0.18.1 / 0.19.0 / 0.19.1` 在 DSH Desktop v2.0.9（DSH 0.1.5-rc.1）上**主机半边无法加载**（它们以值方式导入 `SessionLogOffset`，桌面版模块面只提供该类型声明）→ 侧边栏文件页签显示「这类内容还没有可用的查看方式。」。请使用 **0.18.0**，或使用已修复该导入的构建；本插件对 0.18（4 端点）与 0.19（6 端点，含 `fs.rename`/`fs.remove`）两套契约均已适配。
+
+## 使用
+
+**三步上手**
+
+1. **设置 → 远程连接** → 添加连接（主机 / 端口 / 用户 / 密钥）→ 点「测试连接」验证；已有 `~/.ssh/config` 可直接一键导入
+2. **添加工作区** → 选「选择远程目录…」→ 选连接 → 浏览并选择远程目录（该目录会成为原生 DSH 工作区）；目录还不存在时点「📁 新建目录」就地创建（本地 / 远程 tab 均支持），创建后自动进入新目录
+3. 进入该工作区会话：内置「文件」页签直接显示远程文件（编辑保存直写远程），「终端」页签自动 SSH 到该工作区的**远程目录**（仅密钥认证）
+
+**会话内直接对模型说**（远程工作区会话中免填连接参数）：
+
+```text
+看看 /home/user/project 下有什么，然后把 train.py 的第 20 行改掉
+跑一下 squeue -u $USER，把排队情况整理成表格
+把这个目录的 *.log 里含 ERROR 的行抓出来
+```
+
+## 代码示例
+
+**示例 1 · 执行远程命令**（`remote_ssh_exec`，默认 120s 超时）：
+
+```json
+{
+  "command": "sinfo -h -o '%P %a %D %t %N' | head -20",
+  "timeoutMs": 30000
+}
+```
+
+返回 `{ ok, exitCode, stdout, stderr, error, truncated, isTimeout }`——例如：
+
+```json
+{ "ok": true, "exitCode": 0, "stdout": "cpu* up 12 idle 8 ...\n", "stderr": "", "error": "", "truncated": false, "isTimeout": false }
+```
+
+**示例 2 · 文件读写（无需同步）**：
+
+```json
+{ "path": "~/project/config.yaml", "content": "lr: 0.001\nepochs: 50\n" }
+```
+
+```json
+{ "path": "~/project/train.py" }
+```
+
+`remote_ssh_cat` 走 base64 传输（二进制安全），`remote_ssh_write` 为原子写入（写临时文件再 rename）。
+
+**示例 3 · 长时任务与挂起恢复**（构建 / 训练显式放宽，卡住可强杀会话）：
+
+```json
+{ "command": "cd ~/project && bash run_train.sh", "timeoutMs": 0 }
+```
+
+```json
+{ "all": true }
+```
+
+`timeoutMs: 0` 禁用本次超时；环境变量 `DSH_REMOTE_SSH_CMD_TIMEOUT_MS=600000` 可改全局默认。超时后池化会话自动丢弃重建，`remote_ssh_kill` 是随时可用的手动兜底。
+
+**远端语义（2.4.44 起写清）**：`timeoutMs` 只是**本地等待预算** —— 到点只放弃等待并丢弃会话，**不会终止远端命令**（远端进程可能继续运行，输出不再回传；断开连接 / 退出 DSH 同理）。需要远端硬时限请用远端自己的 `timeout <秒> <命令>`。**按停止键取消**与 `remote_ssh_kill` 才代表「终止」：插件会给远端 shell 所在的进程组发 SIGHUP（最多等 4s；与关终端同义，`nohup` / `setsid` 起的任务不受影响）。
+
+**示例 4 · 远程工作区内的工具调用**（免填 `profileId`，相对路径基于工作区远程目录）：
+
+```json
+{ "path": "configs/exp1.yaml" }
+```
+
+**示例 5 · 从 `~/.ssh/config` 导入连接**：设置 → 远程连接 → 「导入 SSH config」→ 勾选主机 → 自动填充 host / user / port / keyPath / ProxyJump。
+
+**示例 6 · 本地镜像同步与回推**（离线批改后再一次性上传）：
+
+```json
+{ "workspaceId": "w_xxx" }
+```
+
+```json
+{ "workspaceId": "w_xxx" }
+```
+
+`remote_ssh_sync` 把远端拉进本地镜像目录，`remote_ssh_push` 把镜像改动推回远端（tar over ssh，批量高效）。
+
+**2.4.20 起同步是「有门槛的整树操作」**，顺序固定为 *体积哨兵 → 解包到临时目录 →（整树时）比对「只存在于镜像的文件」→ 原子替换*，任何一步失败都**不碰旧镜像**：
+
+| 参数 | 作用 |
+| --- | --- |
+| `paths` | 只同步这些子路径（相对远端根），例如 `["src","docs"]`。**局部同步只覆盖对应子路径，不删除镜像里任何其它文件。** |
+| `exclude` | 排除规则（相对远端根，支持 `*`），下推为 `tar --exclude=./x`，例如 `["data","*.log"]` |
+| `force` | 显式确认：跳过体积哨兵与「仅存在于镜像的文件」保护（确认要整树全量复制时才用） |
+| `maxBytes` | 本次同步的体积上限，覆盖工作区设置与默认 **2 GiB** |
+| `timeoutMs` | 本次同步的墙钟预算，默认 **10 分钟**（0 = 不限） |
+
+```json
+{ "workspaceId": "w_xxx", "paths": ["src"], "exclude": ["data", "*.log"] }
+```
+
+- **体积哨兵**：删除任何东西之前先 `du -sb -c -- <本次范围>`（15 秒预算，只测要同步的范围）。超过上限、探测超时、远端无 `du`、输出不可解析 —— **一律拒绝**，要求显式 `force: true`。默认上限 2 GiB（`syncMaxBytes` / 环境变量 `DSH_REMOTE_SSH_SYNC_MAX_BYTES` 可调）。
+- **镜像独有文件默认不删**：整树同步前比对旧镜像与拉取结果，发现「远端没有、镜像里有」的文件就拒绝并列出清单（最多 20 条），提示先 `remote_ssh_push` 补推，或确认放弃后加 `force: true`。插件自己写的 `.remote-ssh.json` 与占位 `README.md` 不算（按内容指纹识别）。
+- **`push` 不污染远端根**：始终排除 `.remote-ssh.json`（连接信息绝不推到远端），并排除插件写的占位 `README.md`（你自己写的同名文件不受影响）。
+- ⚠️ **`exclude` 不抑制被显式列进 `paths` 的路径**（tar 对命令行点名的成员不做 `--exclude` 过滤）：要排除大目录，请把 `paths` 提到它的父目录，让大目录成为「成员」而不是「目标」。另外，不匹配任何内容的 exclude 模式**不会报错也不会提示**（tar 的语义），别把"传了没反应"当成参数被丢弃的证据。
+- **镜像目录是"出站缓冲区"，不是远端快照**：agent 的 `write` 会同时写镜像与远端对应文件；`remote_ssh_push` 是这些改动的**回推通道**。要在会话里读远端最新内容请用「文件」页签或 `remote_ssh_cat` —— 镜像里的内容可能已经过期。
+- **写回桥（issue #24）**：`write`/`edit` 落本地镜像后会把同一份内容推到远端。2.4.24 起：
+  - **超过 4 MiB 的内容也照推**（分块 base64 追加 + 远端字节数校验）—— 旧版这里是确定性失败，"写日志、模型看不见"，于是模型以为远端已有该文件；
+  - **推送失败会明确报错**，消息里写清"本地镜像已写入成功、只是没同步到远端"，并给出 `remote_ssh_push` 这条补救路径。想恢复"只写日志、不影响工具返回"的旧行为：设置 `writeBackFailure: "log"`（或环境变量 `DSH_REMOTE_SSH_WRITEBACK_FAILURE=log`）——**2.4.26 起**这种模式下被护栏 B 拦下时，那份带补救步骤的完整报告也会写进日志（此前只记一行短提示，等于"只报告、不推送"却没有报告）。
+  - **不想让草稿跟着进远端**：工作区可设 `writeBack: false` 整体关闭，或用 `writeBackExclude` 排除路径（镜像相对路径，支持 `*` / `**` / `?`，结尾带 `/` 视为目录前缀），例如 `["_patch/**", "*.log"]`。
+  - **护栏 B（2.4.25 起，默认开）：推之前先看远端有没有被别人改过**。推送成功后插件记下远端的 `size:mtime`（`~/.dsh/remote-ssh/writeback-mtimes.json`），下次推同一路径前复查：**不一致或远端那份已消失 → 不推送**，并报错说明"本地镜像已写入成功、只是没推到远端"，给出 `remote_ssh_sync`（拉下来比对）/ `remote_ssh_push`（确认以本地为准）两条出路。共享集群上最常见的"另一个写入者"就是**你自己刚跑完的作业**，这条护栏挡的正是"作业改了远端、镜像还是旧版、agent 再写一次把改动覆盖掉"。
+    - 只在**远端自己的时间轴**上自比（不与本地 mtime 比：跨机时钟偏移、tar/base64 重写都会让两边不可比）；**读不到 ≠ 被改过** —— `stat` 失败、ssh 抖动都归为"状态未知"照常推送，只留一行日志。
+    - 显式写远端（`remote_ssh_write`、文件面板保存）或 `remote_ssh_push` / `remote_ssh_sync` 成功之后，相关记录会被清掉（那之后镜像与远端又是一致的）—— 这也是被拦下后的官方出路。
+    - **关掉它**：设置 `writeBackFreshness: false`，或环境变量 `DSH_REMOTE_SSH_WRITEBACK_FRESHNESS=off`（回到"每次都无条件覆盖"）。
+  - **这些开关都能在设置面板里改**（2.4.25 起）：设置 → 本插件 → 「写回与终端（进阶）」有 `nodePath` / `writeBackFailure` / `writeBackFreshness`；每个远程工作区下面多一组「启用写回 + 写回排除」。
+
+## 模型工具
+
+| 工具 | 用途 |
+| --- | --- |
+| `remote_ssh_profiles` | 列出连接配置 + 当前会话远程工作区上下文 |
+| `remote_ssh_exec` | 执行远程命令（默认 120s **本地等待预算**，`timeoutMs` 可放宽/禁用；按停止键取消会 SIGHUP 远端进程组） |
+| `remote_ssh_kill` | 强制关闭池化 SSH 会话，并尽力给远端进程组发 SIGHUP（挂起命令的兜底恢复） |
+| `remote_ssh_ls` | 列举远程目录 |
+| `remote_ssh_cat` | 读取远程文件 |
+| `remote_ssh_write` | 写入远程文件 |
+| `remote_ssh_grep` | 搜索远程文件内容 |
+| `remote_ssh_glob` | 查找远程文件 |
+| `remote_ssh_mkdir` | 创建远程目录 |
+| `remote_ssh_delete` | 删除远程文件/目录 |
+| `remote_ssh_move` | 移动/重命名 |
+| `remote_ssh_sync` | 远端同步到本地镜像（**整树**：可用 `paths`/`exclude` 收窄，体积超限会被拒，镜像独有文件默认不删） |
+| `remote_ssh_push` | 本地镜像推送回远端（自动排除插件自有的 `.remote-ssh.json` 与占位 `README.md`） |
+
+远程工作区会话中调用工具可免填 `profileId` 等连接参数；全部文件/命令类工具走持久 SSH 会话池 + 结果缓存，`remote_ssh_exec` 单命令实测 ≈15× 提速。
+
+## `@` 文件引用补全
+
+远程工作区会话里输入 `@`，候选来自**远端**（与「文件」页签的树一致），而不是本地镜像目录：
+
+- **索引来源**：git 仓库用 `git ls-files --cached --others --exclude-standard`（尊重 `.gitignore`、含未跟踪文件；真实超算实测 0.117s / 137 条），非 git 目录回退有界 `find`（`maxdepth 5` + 剪枝，实测 1.57s / 3121 条）；
+- **排除在远端、截断之前**（2.4.8 修复）：`git ls-files --cached --others` 的输出**不是全局字典序**（未跟踪文件按 readdir 顺序先输出），`node_modules/` 这类目录可能占满前两万行把配额吃光——因此排除目录由远端 `grep -vE` 在 `head` 之前完成（与 `-prune` 同源，正则由同一份排除表生成），客户端过滤仅作双保险；索引达到上限时会打一条 warn 提示可能漏文件；
+- **查询语义与官方 provider 逐条对齐**：`@` 与 `@src/` 走远端目录列举；`@read` 走索引模糊匹配（同名 > 前缀 > 名称子串 > 路径子串 > 子序列，目录加权 +25）；
+- **不卡输入框**：索引按工作区缓存 60 秒（写文件/执行命令后自动失效），单次补全只等 900ms——超时先用旧索引作答、重建在后台进行；连接异常时自动回退到本地行为；
+- **本地工作区不受影响**：非远程会话直接委托宿主原实现，索引与排序完全没有改动。
+
+## 命令超时与恢复
+
+所有 SSH 命令默认 **120 秒**超时（issue #5）：一条挂起的远端命令（网络卡顿、远端进程僵死、等待 stdin 的 `cat`）不会再永久占用会话、拖死后续命令。
+
+- **超时后自动恢复**：池化会话超时即被丢弃并自动重建，后续命令照常执行；一次性连接超时即终止 SSH 进程；
+- **显式放宽**：`remote_ssh_exec` 传 `timeoutMs`（毫秒）覆盖单次预算，`0` 禁用超时（长时构建/训练）；环境变量 `DSH_REMOTE_SSH_CMD_TIMEOUT_MS` 覆盖全局默认；
+- **手动兜底**：`remote_ssh_kill`（或 `all: true`）强制关闭某个/全部池化会话，挂起命令随时可清理；
+- **取消 / 超时 / kill 的远端语义**：按停止键取消与 `remote_ssh_kill` 会尽力**终止远端进程组**（SIGHUP，最多等 4s）；`timeoutMs` 超时、断连只**放弃等待**，远端命令可能继续运行（需要硬时限请用远端 `timeout`）；
+- 超时命令**不做自动重试**（重试一条挂起的命令只会再次挂起），由模型决定是否改用 `remote_ssh_kill` 或换命令重试。
+
+## 兼容性
+
+**实测矩阵**（2026-09-12，均为真机验证）：
+
+| 组件 | 版本 | 状态 |
+| --- | --- | --- |
+| DSH | 0.1.5-rc.1（DSH Desktop v2.0.9） | ✅ 主机服务 / settings / tools / slot / 上传下载拦截全部咬合 |
+| DSH | **0.2.1-rc.1**（DeepSeek Harness 桌面端 nightly，2026-10-17 实测） | ✅ 2.4.32 起适配：信任源从已被移除的 `ctx.webRuntime.trustedHosts` 迁到 **`ctx.webStartup.trustedHosts`**（两个都软注入，老宿主自动退回旧源、都没有则 loopback-only），`--trusted-host` 的远程访问路径因此真正生效；三个 DSH peer 显式补上 `^0.2.1-rc.1`，**不再依赖宿主是否传 `includePrerelease`**；逐 API 复核 `webServer`/`subprocess`/`settings`/`slots`/`locale`/`defineTool`/cordis 生命周期全部未变（13 个工具注册通过，`testConnection` 实测 200），本插件零 warn/零 error。⚠️ 宿主新增的"监听绑定 IP 即受信"例外本插件**不跟随**（有意更严：本插件路由在宿主浏览器令牌认证之外，需要远程访问请显式 `--trusted-host`） |
+| DSH | **0.2.0-rc.1**（DeepSeek Harness 桌面端 nightly，2026-09-28） | ✅ 2.4.16 起适配并真机验证：peer 范围显式列出该版本线（否则 harness 会**拒绝安装/激活**）；`settings` 新 API 与旧数据迁移继续有效（实测升级后首次启动即恢复全部连接与工作区）；终端 patch 仍命中 `terminal-controller`。客户端注入清单同步移除运行时已不提供的 `dsh-client-runtime`；2.4.17 修好浅色主题下"工作区地球角标不可见"（颜色改为取图标自身计算色） |
+| DSH | **0.1.7-rc.2**（DSH Desktop v2.0.15） | ✅ 2.4.15 起适配：`settings` 新 API（`configure`/`describe`/`update`，数据存于本插件 entry 的 Config，字段标 `.volatile()`）+ **旧 `settings.yaml` 一次性迁移**（连接/工作区 ID 与 mirrorPath 全保留，无需重建）；侧边栏终端改由宿主原生 `terminal-controller` 管理，patch 已同时覆盖它与 `better-sidebar` |
+| DSH | 0.1.5-rc.1 / 0.1.6 线 / 0.1.0-rc.6 线 | ✅ 主机服务 / settings / tools / slot / 上传下载拦截全部咬合（peer 范围继续覆盖）；⚠️ **2.4.40 及更早**在这一代上会误判 settings 代际（两套接口都在 → 走 0.1.7+ 新分支 → 读恒空、写抛 `namespace not registered`，表现为「连接列表永远为空、导入与保存都没反应」，issue #34），**2.4.41 起修复** |
+| DSH | 0.1.2-rc.1 稳定线 | ✅（插件 2.3.x 时代基线） |
+| dsh-better-sidebar | 0.15.0 – 0.18.0 | ✅ `fs.tree`/`fs.read`/`fs.write` + `fs.search`（`{ matches: cwd 相对 '/'-分隔路径, truncated }` 契约，2.4.11 起；此前只回 `entries` 会让「按文件名搜索」崩掉整块页签） |
+| dsh-better-sidebar | 0.19.x | ⚠️ 插件侧已适配 6 端点（含 `fs.rename`/`fs.remove`）；但 0.19.0/0.19.1 自身在 DSH Desktop 上主机半边无法加载，需等上游修复（见[安装](#安装)的警告） |
+| dsh-better-sidebar | **0.20 – 0.24.x**（实测 0.24.1） | ✅ **2.4.18 起适配 9 端点**：0.23+ 的文件树改为**批量 `fs.trees`**（一次请求列举「可见集」，≤64 条）+ 新增 `fs.mkdir`，0.24 的「打开方式」走 `open.external`。此前只注册 `fs.tree` → 新版的列举**绕过拦截**落到 better-sidebar 自己的本地实现，远程项目里看到的就成了**本地镜像目录**；「打开方式」也只会打开本地镜像（见[故障排查](#故障排查)） |
+| dsh-better-sidebar | **0.25.0 – 0.26.1** | ✅ **2.4.28 – 2.4.31 起适配**：git 面板的全部端点（`git.*` 18 项：status / diff / log / stage / commit / checkout / blame / worktrees / pull / push …）改由 exact 路由接管并**在远端执行**（此前未接管 → 远程项目里 git 面板显示的是**本地镜像**那份仓库）；0.25.0 的 `fs.createFile`、0.26.1 的 `fs.readPage`（大文件分页预览）逐个对齐上游语义 |
+| dsh-better-sidebar | **0.28.0 – 0.28.2**（实测 0.28.2） | ✅ **2.4.32 / 2.4.42 起适配**：0.28.0 的派发表从 42 → 43 个方法，唯一新增的 **`git.graph`（提交图分页）** 已接管（含 sha256 快照游标、`graph-stale` 409 / `graph-limit` 400）；**0.28.2 又新增 `git.history`**（提交图分支数超上限时的分页历史兜底）→ **2.4.42 起接管**（前后各取一次「全量 refs + HEAD + shallow」快照算指纹，远端仍是每页 2 次 SSH 往返）。不接管它时，远程工作区里客户端翻历史会读**本地镜像**那份仓库（upstream-drift 2026-11-02 报红的原因）。已接管的 **`git.status`** 补齐 0.28.0 的新形状（`upstream`/`ahead`/`behind`/`detached`/`operation` + 条目级 `staged`/`unstaged` 行数 + 2000 条截断），远端一条脚本一次 SSH 往返取齐。`fs.*` 10 项、`/sidebar/file`、`open.external` 与 0.26.1 **逐字节相同**，无需改动 |
+| dsh-better-sidebar | **未安装 / 加载失败** | ✅ **2.4.18 起可正常启动**（不再阻塞 `web boot`，见[安装](#安装)）：设置页「远程连接」、模型工具、远程终端、`@` 补全照常；⚠️ 「文件」页签的远程读写与编辑器页签不可用（`/sidebar/api/fs.*` 属于 better-sidebar；内核原生侧边栏走自己的 `/api/*`）。宿主会打一条 `patch: entry "better-sidebar" not found` 的 warn，属正常 |
+| 远程主机 sshd | 标准 OpenSSH（Linux / 超算 / Windows） | ✅ 密钥认证；✅ 密码认证（Windows 用系统 OpenSSH 原生 `SSH_ASKPASS`，零依赖、助手自动落在纯 ASCII 目录；POSIX 需本机 `sshpass`） |
+
+插件不修改 DSH 源码、不注入 profile 依赖树，全部能力经官方 `cordis.patch.yml` + profile 机制挂载。
+
+## 故障排查
+
+| 现象 | 原因与解法 |
+| --- | --- |
+| 「测试连接」报 `Permission denied (publickey)` | ① 私钥**带口令**：插件以批处理模式运行（`BatchMode=yes`），无法交互输口令——先用 `ssh-add` 加载，或去掉密钥口令；② Windows host 且用户在 Administrators 组时，公钥须写入 `C:\ProgramData\ssh\administrators_authorized_keys`；③ 用户名的写法（`user` / `.\user` / `user@domain`）要与手动连接一致 |
+| 从 git-bash 启动 `dsh web` 后密钥认证失败 | 2.3.9 起已修复：Windows 下 ssh 解析固定为系统 OpenSSH 绝对路径（此前会误用 Git 自带的 MSYS2 ssh） |
+| 侧边栏文件页签显示「这类内容还没有可用的查看方式。」 | `dsh-better-sidebar` 主机半边未加载：0.18.1 / 0.19.0 / 0.19.1 在 DSH Desktop 上会因 `SessionLogOffset` 运行时导入失败——降到 0.18.0 或使用修复版（上游 PR [#641](https://github.com/omdsh-dev/DSH-better-sidebar/pull/641)） |
+| 前端整屏报 `Failed to load plugins` / `web boot: 1 entry did not activate` / `@zhangfengshun/dsh-remote-ssh: pending (waiting for service: betterSidebar)`，Desktop 还提示「插件恢复」 | ≤ 2.4.17 已知问题（issue [#18](https://github.com/ZhangFengshun/dsh-remote-ssh/issues/18)）：本插件当时把 better-sidebar 的客户端服务声明为**硬依赖**，未安装它的用户前端会停在 pending（cordis 的 fiber 只要一个 inject 键缺失就整体不激活）。**升级到 2.4.18** 即可；或临时装上 `dsh-better-sidebar`（注意版本线要与内核匹配）并重启 |
+| **远程项目的侧边栏「文件」页签显示的是本地目录（不是远程目录）** | 2.4.18 起已修复：`dsh-better-sidebar` 0.23+ 把文件树从「逐层 `fs.tree`」改成「一次 `fs.trees` 批量列举可见集」，而插件当时只注册了 `fs.tree` 的 exact 路由 → 列举请求**绕过拦截**、落到 better-sidebar 自己的宿主实现（读本地 fs）。升级插件到 **2.4.18** 并重启 DSH 即可；本地工作区不受影响（两条分支都实现了 `fs.trees`）。0.24 新增的 `fs.mkdir`（新建目录）同理，此前只会建在本地镜像里 |
+| **右键「打开方式 / 在文件管理器中显示」打开的是本地镜像目录（不是远端）** | 2.4.18 起已修复：该菜单把**客户端已知的绝对路径**直接交给本机打开器（`explorer.exe /select,<路径>` / `rundll32 url.dll,FileProtocolHandler <url>`），远程工作区里客户端只有镜像路径。现在拦截 `open.external`：远程工作区改开 `vscode://vscode-remote/ssh-remote+<别名><远端路径>`（别名取自 `~/.ssh/config`；`reveal` 打开的是该文件**所在的远端目录**），本地工作区行为不变 |
+| 远程工作区里「用 VS Code 打开」没反应 / 提示连不上 | 需要 `~/.ssh/config` 里有与连接**一致的别名**（Host 同名或 HostName 相同、且端口与用户名一致）——插件据此生成 `ssh-remote+<别名>`，VS Code 会复用该条目的 `Port`/`User`/`IdentityFile`/`ProxyJump`。没有别名且端口不是 22 时插件**回退本机行为**并在 DSH 日志里打一条 warn（避免静默失败）。另外：**不要**在 better-sidebar 的 `openWith.sshHost` 里手填主机——那条分支由客户端自行打开、路径仍是本地镜像路径，交给本插件处理才对 |
+| **`~/.ssh/config` 里的 `Host` 块会被继承吗**（issue [#21](https://github.com/ZhangFengshun/dsh-remote-ssh/issues/21)） | 分三层：① **导入 ≠ 运行时继承** —— 设置页「从 `~/.ssh/config` 导入」是把该 Host 块的 HostName / User / Port / IdentityFile / ProxyJump **抄进连接配置**，之后再改 `~/.ssh/config` 不会自动同步（重新导入即可）。② **连接时以连接配置为准** —— 插件固定以 `user@host` 为目标、并**总是**传 `-p <端口>`（没填就是 22），而命令行参数**优先于** config，所以**端口与用户名必须填对**（导入会帮你填好）；只有 `keyPath` 与 `proxyJump` **留空**时，才会用 config 里的 `IdentityFile` / `ProxyJump`。③ **别名与其余选项** —— 把「主机」填成 Host 别名时，config 里插件**没有**显式指定的选项（`ProxyCommand`、`Compression`、`Ciphers`、`SetEnv` 等）照常由 ssh 应用，但插件自己传的 `-o`（`StrictHostKeyChecking=accept-new`、`ConnectTimeout=15`、`ServerAliveInterval=30`、`ServerAliveCountMax=3`、`ClearAllForwardings=yes`，非交互会话还有 `BatchMode=yes` / `PreferredAuthentications=publickey`）会覆盖同名项。导入侧只解析 `Host` 块（`Include` 递归跟进）、**含 `*`/`?` 的名字跳过**（所以全局 `Host *` 不会被导入 —— 但连接时 ssh 仍会应用它），`Match` 块不解析（块内指令会被算进上一个 `Host`） |
+| **「测试连接」/ 工具对密码认证报 `Permission denied`**，且诊断里出现 `ssh_askpass: posix_spawnp: No such file or directory` 或 `CreateProcessW failed error:2` | ≤ 2.4.42 的已知问题（issue [#36](https://github.com/ZhangFengshun/dsh-remote-ssh/issues/36)）：Windows 用户名含中文等非 ASCII 字符时 `%USERPROFILE%`（以及它下面的 `%TEMP%`）都不是 ASCII，而 Windows OpenSSH 用**窄字符路径**启动 askpass 助手 → 助手根本没执行，ssh 把**空口令**发给服务端（提示还会误报成「公钥认证失败 / 检查 keyPath」）。**2.4.43 起**助手改落 `C:\ProgramData\dsh-remote-ssh` → `C:\Users\Public\dsh-remote-ssh` → 用户目录，自动挑纯 ASCII 且可写的落点；也可用环境变量 `DSH_REMOTE_SSH_ASKPASS` 显式指定纯 ASCII 目录下的 `.cmd` 助手（两行内容：`@<nul set /p x="%RSSH_ASKPASS_PW%"` 与 `@echo.`）。升级后删掉旧的 `~/.dsh/remote-ssh/askpass.cmd` 再重试即可 |
+| 内置「终端」页签连不上 | 终端为 `ssh -tt` 交互式通道，**仅支持密钥认证**；密码认证的连接会回退为本地 shell 并打印一行提示（避免把本地 shell 误认为已连上远程），密码认证请改用「文件」页签与模型工具 |
+| 「测试连接」报 **`配置的私钥文件不存在或不可读：…`**（或原始信息里有 `Warning: Identity file … not accessible`） | 2.4.19 起会直接点名：连接里 `keyPath` 指向的私钥文件在本机不存在（拼错路径、换机后密钥没同步、或写了 `~` 但文件不在那儿）。改成正确路径，或**清空 `keyPath`** 改为依赖 ssh-agent / `~/.ssh/config` 里的 `IdentityFile`；注意「测试连接」以批处理模式运行，带口令的密钥无法交互输口令（先 `ssh-add`） |
+| 远端要求**扫码 / 动态口令 / 二次验证**（`keyboard-interactive`），「测试连接」仍失败 | 「测试连接」与文件、工具能力走的是**非交互公钥通道**（`BatchMode=yes` + `PreferredAuthentications=publickey`），不会弹出扫码提示 —— 这是刻意设计（批量、并发、无人值守都不能等人工扫码）。**交互式登录请用内置「终端」页签**（`ssh -tt` 交互通道，可扫码/输密码/输动态口令）；要让文件与工具能力可用，请在远端 `~/.ssh/authorized_keys` 收录本机公钥（贴出的 `Permission denied (publickey,password,keyboard-interactive)` 只说明远端**允许**这些方式，不代表本插件能用它们） |
+| 终端落在远程 `$HOME` 而不是工作区目录 | 2.4.5 起已修复（wrapper 会 `cd` 到工作区 `remotePath`，目录不存在时回退 `$HOME`）；若仍停在 `$HOME`，确认 2.4.5 已装入并重启 DSH |
+| 「文件」页签树根显示镜像目录 ID（如 `wmirror3`） | 2.4.6 起已修复：树根改为显示**远程目录名**（如 `my-project`），悬停可见完整远程路径；该标签不经过 `fs.*` 路由，由客户端渲染层替换 |
+| `@` 补全只搜到镜像里那几个文件 | 2.4.7 起已修复：远程工作区会话的 `@` 补全改列远端文件（索引缓存 60s + 900ms 查询预算）；若仍只有镜像文件，确认 2.4.7 已装入并重启 DSH |
+| 大仓里 `@` 搜不到真实文件（如根目录 `AGENTS.md`、`src/**`） | 2.4.8 起已修复：此前排除目录发生在截断之后，`node_modules/` 这类目录会吃光索引配额；现在排除由远端 `grep`/`-prune` 在截断前完成，并会在索引达上限时打 warn 提示 |
+| 想加的远程目录还不存在，「添加工作区」里没法创建 | 2.4.9 起「目录选择器」底部有「📁 新建目录」（本地 / 远程 tab 均有）：输入名字即可就地创建并自动进入 |
+| 从局域网 / 另一台设备访问时插件文件能力全部报 403 | 2.4.10 起已修复：信任判定改用宿主 `ctx.webRuntime.trustedHosts`（与 `/api` 网关同源）。把访问地址加进 DSH 信任列表即可：启动时加 `--trusted-host <host[:port]>`（或经配对设备访问）；未配置时行为与之前一致（仅本机 loopback） |
+| 「文件」页签的「按文件名搜索」一输入就报 `Cannot read properties of undefined (reading 'length')` | 2.4.11 起已修复：`fs.search` 拦截此前只返回 `entries`，而 better-sidebar 客户端契约是 `{ matches, truncated }`；现在补上 `matches`（cwd 相对、`/` 分隔，与上游自带实现一致）并保留 `entries` |
+| 远程工作区里「按文件名搜索」一直转圈（大工作区） | 2.4.11 起已修复：改为浅层优先（`-maxdepth 3`，实测冷 0.68s / 热 0.11s）且**有命中就立即返回**（深挖转后台预热缓存，浅层零命中才同步等深挖 `-maxdepth 8`），遍历前剪噪声目录、去掉会阻塞短路的 `sort`，并加远端墙钟预算——到点返回**已收集的部分结果**并标记不完整。实测某大型远程项目工作区：旧实现 5 分钟零输出 → 现在 **0.96s 返回 43 条** |
+| 远程会话里 `@文件名` 没有候选，但单独输入 `@` 有 | 2.4.11 起已修复：模糊查询依赖索引，而索引首选 `git ls-files --cached --others`（`--others` 要遍历整棵工作树，巨型项目上跑不完 → 索引为空）。现在三级降级（完整 git 6s → 仅索引 git 3s → 有界 `find` `maxdepth 3` + 5s），并在索引未就绪时用有界 find 即时兜底（实测 0.65s），不再出现「全空」 |
+| 刚发布就安装：`minimumReleaseAge` / `ERR_PNPM_MINIMUM_RELEASE_AGE_VIOLATION` / 「No matching version」 | 供应链新鲜度策略，分两层：① **npm 元数据传播**通常 1–5 分钟（`npm view` 看不到新版本就属于这层）；② **DSH Desktop 插件管理器走 pnpm**，其 `minimumReleaseAge` 窗口**实测为 24 小时** —— 新版本发布后约一天内，管理器安装会被策略拦下（日志在 `<profile>/.plugin-manager/logs/*/pnpm.log`，里面会打印 cutoff 时间）。等到窗口过去重试即可。**想立刻装**：把包**名**加进 `<profile>/pnpm-workspace.yaml` 的 `minimumReleaseAgeExclude` —— pnpm 11.7 实测，*解析新版本*这条路径只认**纯包名**形式；`名@版本` 形式只对 *lockfile 校验* 生效，所以钉住版本仍会在卸载旧版、装新版时撞上 `ERR_PNPM_NO_MATURE_MATCHING_VERSION` |
+| **换一台电脑后，远程工作区的文件夹图标上没有本机看到的地球角标** | 该角标是客户端半边的 DOM 装饰（壳层工作区行只有固定文件夹原语，没有 per-workspace 图标 API），成立前提是：客户端半边已加载 → 宿主能返回远程工作区 → 行文本/属性与工作区标题匹配 → 壳层 DOM 结构一致 → **角标颜色在该主题下可见**。2.4.17 起：颜色改为取文件夹图标自身的计算色（浅色/深色都可见，此前硬编码白色在**浅色主题**下不可见）、匹配做空白归一化并兼容 `title`/`aria-label`、并加了自检。**排查**：在开发者工具 Console 执行 `window.__dshRemoteSshGlobeStats(true)` —— 返回 `undefined` 说明客户端半边没加载（升级插件后硬刷新页面）；`remoteWorkspaces: 0` 说明宿主没返回工作区（查插件版本与 harness 兼容性）；`remoteWorkspaces > 0` 而 `globesInDom: 0` 说明标题或 DOM 没匹配上（对照输出里的 `titleSamples` 与侧边栏实际显示文字）。 |
+| `remote_ssh_push` / `remote_ssh_sync` 明明推送成功却报 `returned invalid output` | 2.4.13 起已修复：这两个工具共用的 output schema 把 `error` 标成必填、成功路径又返回未声明的 `remotePath`/`mirrorPath`，于是**只有成功会报错**（失败路径反而合法）。现在 schema 声明两个路径字段、`error` 改为可选，成功路径也带 `error: ""`；全文件所有 output schema 的 `error` 一并改为可选 |
+| 同步被拒：「超过同步上限」/「无法在 15 秒内确认远端体积」 | 2.4.20 起的**体积哨兵**：删除任何东西之前先量体积，默认上限 **2 GiB**。远端根是「代码 + 数据集」的混合目录时这是常态。三条路：① 用 `paths: ["src"]` 只同步需要的子路径（推荐）；② 用 `exclude: ["data"]` 排掉大目录；③ 确实要整树复制就带 `force: true`。上限本身可用工作区字段 `syncMaxBytes` 或环境变量 `DSH_REMOTE_SSH_SYNC_MAX_BYTES` 调整 |
+| 同步被拒：「将删除 N 个只存在于镜像、远端没有的文件」 | 这是**数据丢失防线**：镜像里那批文件（常见于 >4 MiB 的写入没能推回远端、或某次 push 失败）在整树替换时会消失。先 `remote_ssh_push` 把它们补推到远端，或确认放弃后带 `force: true` 重试。插件自己的 `.remote-ssh.json` 与占位 `README.md` 不计入这个清单 |
+| 同步很久不返回怎么办 | 2.4.20 起同步/推送有墙钟预算（默认 10 分钟，`timeoutMs` 可调，0 = 不限），到点自动终止两端进程且**不动旧镜像**。旧版本（≤2.4.19）没有超时，只能杀进程 |
+| **填了 ProxyJump 的连接，内置「终端」页签一开就退出（255，`no argument after keyword "-j"`）** | 2.4.21 起已修复：终端 wrapper 拼 ssh argv 时把 `-J` **插进了 `-o` 与其取值之间**，ssh 于是把 `-J` 当成 `-o` 的关键字（关键字小写化后就是报文里的 `-j`）并报「no argument」。升级到 **2.4.21** 并重启 DSH 即可（wrapper 每次加载都会重写，无需手动删 `~/.dsh/remote-ssh/` 下的文件）。旧版本的临时绕过：清空该连接的 ProxyJump（仅当目标机可直达时可行） |
+| **push 之后远端根多出 `.remote-ssh.json` / `README.md`，或者 `exclude` 好像没生效** | **2.4.20 的回归，2.4.22 已修复**：`sync` 方向的排除规则要带 shell 引号（拼进远端命令字符串），但同一条 helper 也被用在了 `push` 方向（字符串作为 **argv** 交给本地 tar，不经 shell）—— 引号于是成了模式的字面字符，所有 `--exclude` 静默失效，连代码写死的两条也没生效。升级到 **2.4.22** 并重启 DSH；**已经 push 过的话**请到远端根删掉多出来的 `.remote-ssh.json` 与 `README.md`（size 与本地镜像里那两个文件一致） |
+| **Windows 上拉取后，中文/日文等非 ASCII 文件名变成乱码（`报告_2026Q1.csv` → `鎶ュ憡_2026Q1.csv`），内容却完好** | **2.4.23 起已修复（issue #22）**。原因是一条三方各自的默认假设：远端 GNU tar 对较短的非 ASCII 名写的是**纯 ustar 头**（名字字段直接放裸 UTF-8 字节，无 PAX、无字符集声明），而 Windows 自带的 `tar.exe`（bsdtar 3.8.8）按**本地 ANSI 代码页**（中文机器 = CP936）解码它 —— **退出码 0、stderr 为空**，只有名字被改写；该构建又不支持 `--hdrcharset`。修法是让远端改用 `--format=pax`（`path=` 记录携带正确的 UTF-8 名），并用能力探针逐 profile 缓存结果，实测**体积零代价**。升级到 **2.4.23** 并重启 DSH 即可。**已经乱码的镜像**：不要直接 `force: true`（那会删掉你在这些副本上做过的修改）——首次整树同步会列出 `乱码名 → 正确名` 的对应关系，按提示要么带 `repairNames: true` 让插件清理（内容以远端为准），要么先在本地改回正确名再 `remote_ssh_push` |
+| **同步被提示「N 个疑似旧版本乱码文件名」** | 这不是"本地独有文件"，而是 ≤2.4.22 在 Windows 上拉取非 ASCII 名留下的改写副本（issue #22）。带 `repairNames: true` 重试即可清理（整树同步随原子替换移除；局部同步会删掉这些副本并顺手清空目录）。插件**只**删除已证明是某个远端正确名被 GBK 改写的那一份 —— 清单里混有真正的本地独有文件时依旧拒绝，绝不借"修复"之名删真文件 |
+| **DSH Desktop 上一打开「终端」页签就一闪而过（`'node' is not recognized…`）** | **2.4.24 起已修复（issue #23）**。生成出来的 wrapper 此前裸调 `node`，而桌面端**按设计**不把自带 node 放进子进程 PATH（`packageManager` 只覆盖包操作；内嵌 node 只以"被宿主用绝对路径调用"的形式存在），于是 PATH 上没有 node 的机器 100% 打不开终端 —— 与 SSH、密钥、跳板机全都无关。2.4.24 起：wrapper 里写死**绝对路径**的 node（优先取设置项 `nodePath` → 环境变量 `DSH_REMOTE_SSH_NODE` → **正在运行本插件的那个解释器** `process.execPath`），失败才回退 PATH，再失败就打一条可操作的错误（说明是本插件的终端、桌面端为何没有 node、怎么配）并以 127 退出。**注意 2.4.24 的解析对官方发布形态是过强的**：打包版上 `execPath` 是 `DeepSeek Harness.exe`、`DSH_DESKTOP_NODE_EXECUTABLE` 不在子进程环境里、同目录也没有 node —— 五条候选**全部落空**（举报人对着打包产物逐条核对过，issue #23 第二轮验收）。**2.4.25 起**再补两条兜底：`%DSH_HOME%\dsh-runtimes\*\dependencies\node\bin\node.exe`（`DSH_HOME` 是宿主导出的通用根）与 `<应用安装目录>\resources\runtime\*\dependencies\node\bin\node.exe`（取自 `process.execPath`，另有 `process.resourcesPath` 那条）—— 实例名**不写死**（`primary` 优先、其余按名排序），逐个 `existsSync` 验证通过才用，用哪条都写进日志。升级到 **2.4.25** 并重启 DSH 即可（wrapper 每次加载重写）。若仍失败，最直接的办法是**在设置面板里把 `nodePath` 填成 node 可执行文件的绝对路径**（2.4.25 起该字段在「写回与终端（进阶）」区块里，不再只存在于配置文件中） |
+| **`write` / `edit` 返回成功，远端却没有这个文件（例如内容超过 4 MiB）** | **2.4.24 起已修复（issue #24）**。写回桥此前在推送失败时只写一行宿主日志：① 超过 4 MiB 的内容被 `MAX_BYTES` 拦下（一个日志、CSV、notebook 就够），② 其余失败（ssh 断开、权限、配额）同样静默 —— 模型以为远端已有该文件。2.4.24 起：>4 MiB 改**分块上传**（并校验远端字节数），不再失败；仍失败时**明确报错**，消息写清"本地镜像已写入成功、只是没同步到远端"并给出 `remote_ssh_push` 补推路径。想恢复旧行为（只写日志）：设置 `writeBackFailure: "log"`（2.4.25 起可直接在设置面板的下拉里选） |
+| **`write` / `edit` 报错说「本地镜像已写入成功，但**没有推送到远端**」** | 这是 **2.4.25 起的护栏 B**（issue #24 第二轮，默认开）：推之前插件发现远端这一份**自上次推送后已被改动**（共享集群上最常见的就是你自己刚跑完的作业写了它），于是选择**只报告、不覆盖** —— 直接推上去会把那些改动静默抹掉。处理：先 `remote_ssh_sync`（或 `remote_ssh_cat`）把远端拉下来比对；确认要以本地为准，用 `remote_ssh_push` 覆盖（push/sync 成功后该记录会被清掉，不会一直拦着）。想彻底关掉：设置里的 `writeBackFreshness`，或环境变量 `DSH_REMOTE_SSH_WRITEBACK_FRESHNESS=off`。若日志里写的是"无法确认远端状态"，那是连接问题 —— 这种情况插件**照常推送**，只留一行日志（读不到 ≠ 被改过）。设了 `writeBackFailure: "log"` 时工具不会报错，但**同一份完整报告会写进日志**（2.4.26 起），别只看工具返回值 |
+| **本地会话里"部分文件打不开"：`cannot read: ENOENT …<profile>\tools\x.py`** | **2.4.27 起已修复（issue #25）**。为了远程工作区，本插件以 `exact` 路由接管了 better-sidebar 的 `/sidebar/file` 与 `/sidebar/api/fs.*` —— 而 **exact 连本地会话一起抢**：本地分支此前把相对路径原样交给 `fs`，Node 按**插件宿主进程的 `process.cwd()`**（pnpm profile 目录）解析，于是相对路径报 ENOENT、绝对路径正常，用户看到的就是"部分文件打不开"。写操作更危险：`fs.write` / `fs.remove` 拿到相对路径会打到**插件宿主目录**里。2.4.27 起所有落点（`/sidebar/file`、`fs.read/tree/trees/write/rename/remove/mkdir/search` 的本地与远程分支、`git.*`、`open.external`）都先按**会话 cwd** 归一（与上游 `ensureWorkspacePath` 同语义）；取不到会话 cwd 时**明确报错**，不再猜 `process.cwd()` |
+| **远程工作区里文件树「新建文件」看着成功了，远端却没有这个文件；git 面板的 blame / 工作树 / 拉取 / 推送结果不对，或报 `not a git repository`** | **2.4.28 起已修复**。better-sidebar **0.25.0** 新增了 9 个端点，其中 6 个与仓库/路径相关，而本插件此前没有注册它们 —— 本插件用 `exact` 路由接管 `/sidebar/api/fs.*` 与 `git.*`，**没注册的端点会回落到上游实现**，而远程工作区里上游拿到的 cwd 是**本地镜像目录**：`fs.createFile` 于是只在镜像里建了个空文件（远端永远没有，与 2.4.18 那次 `fs.trees` 绕过拦截同一类）；`git.blame` / `git.diff-head` / `git.worktrees` 按镜像的 git 状态计算（镜像通常没有 `.git`，于是空结果或报错）；`git.pull` / `git.push` 动的更是镜像那个与远端无关的仓库。2.4.28 起这 6 个端点全部接管并在**远端**执行；纯模型端点（`git.models` / `git.suggest-message` / `git.commit-model`）不碰仓库路径，仍交给上游。升级到 **2.4.28** 并重启 DSH 即可 |
+| **在会话目录里写的草稿/临时文件被无声推到远端（共享集群的项目目录）** | 写回桥对 agent 的 `write`/`edit` 是"落镜像 + 推远端"（issue #24 的护栏建议）。工作区可设 `writeBack: false` 整体关掉写回，或用 `writeBackExclude` 排除路径：镜像相对路径、支持 `*` / `**` / `?`，结尾带 `/` 视为目录前缀，例如 `["_patch/**", "*.log", "scratch/"]`。两者都**只影响写回**，`remote_ssh_push` 仍可手工把需要的东西推上去 |
+| **远程工作区里写/删的文件没落到远端，或报 `400 ENOENT … lstat '<镜像路径>'`；在**子目录**里开的会话尤其容易遇到** | **2.4.29 起已修复**。远程工作区的判定此前只认"正好放着 `.remote-ssh.json` 的那一级目录"（`readRemoteInfoSync` **不向上遍历**）：真实客户端总带有效 `sessionId`（会话 cwd = 镜像根）所以一直没暴露，但**会话在工作区子目录里启动**、或客户端带了**过期/未知 sessionId**（判定回退到请求里的 `path`）时会漏判 —— 漏判的后果是写/删**静默作用在本地镜像**上。2.4.29 起判定改为按**工作区根前缀**匹配（同时修掉"拿更深的路径当基准、远端路径少一段"的映射问题；`@` 文件引用补全同样受益）。另外，**镜像目录下但不属于任何已注册工作区**的路径现在**明确报错**（读写都报），不再当成本地路径去操作。升级到 **2.4.29** 并重启 DSH 即可 |
+| 命令卡住不返回 | 默认 120s 超时后自动丢弃会话（**超时不杀远端命令**）；长时任务用 `timeoutMs: 0`，随时可用 `remote_ssh_kill` 或按停止键取消 —— 两者都会 SIGHUP 远端进程组 |
+| 远程工作区里在侧栏编辑器改完文件、点 √ 或 Ctrl+S 保存不上 | **2.4.45 起已修复（issue #37）**：保存以前只写进本地镜像，远端文件没变。现在直接写远端，并保留原文件的 BOM 与行尾；基线过期会回 `fs-conflict` 让编辑器提示重载。GBK / UTF-16 等非 UTF-8 文件目前**明确拒绝**保存（避免用 UTF-8 覆盖老编码），请在远端改或让模型用工具写 |
+| 大文件读取被截断 | 单文件读取上限 4MB、下载池化路径约 6.29MB（更大自动回落一次性连接）；用 `remote_ssh_exec` + `head`/`tail` 分段处理 |
+| **远程工作区会话里，本机绝对路径读不到、写/删落在远端；或者远端绝对路径（`/mnt/...`、`/tmp/x.log`）一律打不开** | **2.4.30 起已修复（issue #26）**。判定"这次请求走不走远端"此前只看**会话 cwd**：会话在远程工作区 → 整条请求都进远端分支。于是 ① 本机绝对路径被推到远端（`<远端根>/Users/...`），读报 `No such file`，**远端恰好有同路径文件时会静默返回另一份文件**，`fs.write` 本机不落盘、`fs.remove`/`fs.rename` 把删除/重命名打到远端；② 远端绝对路径被当成相对路径再拼一次远端根（`<root><root>/...`）。现在按**每条请求路径**的归属决定：镜像成员 → 远端映射；盘符/UNC（含 `C:foo`）→ **本地**，即使会话在远程工作区；`/...` 远端绝对路径 → **原样下发**；相对路径 → 按会话 cwd；同一次请求混用本机与远端/镜像路径 → 明确 `400`（不再猜一侧）。同一版把 `localToRemote()` 那句"镜像之外按相对路径处理"的兜底从 `debug` 提到 `warn`（真被触发说明又出现同类误判） |
+| **「添加工作区」→「📁 本地目录」tab 一打开就报「path 为必填项」，目录树空、无法添加本地工作区** | **2.4.31 起已修复（issue #27）**：这是 2.4.27 为修 issue #25 引入 `localPathOf()` 时误伤的 —— 弹窗首次打开会**按设计**发空路径（语义是「打开主目录」，`lib/client.js` 有注释、`localListDir()` 也有 `homedir()` 兜底），而空路径被一律判 400。现在只放行「无会话 cwd + 空路径 + `fs.tree` 这个只读方法」；**写操作、相对路径、其它方法一律照旧报错**。临时绕过：在路径栏手填完整本地绝对路径再点「打开」 |
+| **远程工作区里点「预览」报「文件不存在，可能已被移动或删除」，同一路径右键下载却正常** | **2.4.35 起已修复（issue #29）**。内置预览取内容不走本插件的 HTTP 路由，而是进程内的 workspace-file RPC → `ctx.fs`，而 `ctx.fs` 的根是**本地镜像** —— 镜像里没有的文件必然 not-found（这就是 #15「read 仍读镜像」的另一面）。现在 `ctx.fs` 的读方法有一层影子：**本地有就照旧读本地，本地没有才回远端取**；远端也没有时仍按原样报不存在。仍未覆盖：远端被改动而镜像里也有旧版本时，读到的仍是镜像那份；远端文件变更不触发实时刷新 |
+| **升级到 2.4.35 后所有技能消失（`skill` 报 unknown / 系统提示里没有技能目录）** | **2.4.36 起已修复（issue #30，2.4.35 的回归）**。2.4.35 的读影子层在"本地不存在"时会回远端取，而路径**不在任何远程镜像里**时把本地原本的 not-found 换成了中文 `FS_IO_ERROR`；`dsh-skill-filesystem` 只认 `FS_NOT_FOUND / ENOENT / FS_NOT_DIRECTORY` 为"根不存在"，于是项目级技能根（`<cwd>/.dsh/skills`，绝大多数项目没有）一列就崩，整份技能目录一条都不注入。现在"远端也拿不到"一律退回本地原始错误（新内部码 `NO_MIRROR`），语义与 2.4.34 一致；远端确有内容才出现的二进制/过大/取消错误照旧透出。临时绕过：回退到 2.4.34 |
+| **与远程工作区同名的本地项目被打上地球角标（🌐）** | **2.4.37 起已修复（issue #31）**。角标是客户端按「工作区行」贴的 DOM 装饰，旧实现只按**标题文本**认行 —— 本地项目与远程工作区同名时文本一样，于是本地那个也被标上。现在改用壳层自带的行键 `data-row-key="workspace:<原生工作区 id>"` 精确对齐（宿主侧把该 id 存进工作区记录 `shellWorkspaceId`，老记录按镜像路径自动回填）；标题匹配只作为旧壳层回退，且同名行不止一行时都不标；升级前误标的行会被自动摘掉 |
+
+## 原理
+
+插件注册 9 个 exact 路由（`/sidebar/api/fs.tree`、`fs.read`、`fs.write`、`fs.search`，better-sidebar 0.19 新增的 `fs.rename`、`fs.remove`，0.23+ 新增的 `fs.trees`、`fs.mkdir`，以及 0.24 的 `open.external`），在 better-sidebar 的 prefix 路由之前拦截。会话 cwd 含 `.remote-ssh.json` 时走 SSH，否则走本地 fs。客户端看到的是本地镜像路径，Host 自动转换为远程路径——对客户端完全透明。
+
+> `fs.trees` 是 0.23+ 的**批量**列举端点（一次请求带上「工作区根 + 所有已展开目录」，≤64 条；旧版是逐层 `fs.tree`）。远程分支用 `remoteListDirsBatch()` **一次 SSH 往返**列举全部目录（逐目录标记行 + `find -printf`，单层失败只影响该层），命中目录缓存（TTL 5s）的层 0 RTT。少注册这一个路由，新版客户端的整棵文件树就会静默回落到宿主的本地实现 —— 这正是 2.4.18 修的问题。
+
+> `open.external` 是 0.24 的「打开方式 / 在文件管理器中显示」端点，宿主侧用本机打开器执行（Windows：`explorer.exe /select,<路径>`、`rundll32 url.dll,FileProtocolHandler <url>`）。远程工作区里客户端只有镜像路径，本插件因此把路径翻译成远端路径并改开 `vscode://vscode-remote/ssh-remote+<`~/.ssh/config` 别名><远端路径>`：`url` 保留客户端选中的 scheme（vscode / cursor / zed），`reveal` 打开该文件**所在的远端目录**。别名按「Host 同名或 HostName 相同 + 端口一致 + 用户兼容」匹配（纯函数 `remoteEditorAuthority`），让 VS Code 复用该条目的端口/用户/密钥/跳板机；**`~` 由插件自己展开**（URL 不过 shell，`~/run/...` 必须先换成远端 home 的绝对路径 —— 用 `printf %s "$HOME"` 查一次并按 profile 缓存 10 分钟），无可用别名或拿不到 home 时回退本机行为并打 warn。**不要**在 better-sidebar 里填 `openWith.sshHost`——那条分支由客户端自行打开、路径仍是镜像路径。
+
+**模型侧的文件工具（agent 的 `write`/`edit`）**走的是**进程内** `ctx.fs`（宿主 base bundle 挂的是本地 `fs-sandbox`），不经过任何 HTTP 路由，因此 2.4.13 及以前只落**本地镜像**——用户在远端机器上找不到文件，只能人工 `remote_ssh_push`。2.4.14 起插件包装 `ctx.fs` 的 `writeText`/`editText`：**原写入照旧**（镜像内容、沙箱围栏、写意图语义全不变），成功后把同一份内容**定向推回远端对应的那个文件**（不是整镜像 tar，避免用旧镜像覆盖远端其它文件），写前自动 `mkdir -p` 远端父目录。推送失败只记一条 warn——本地写入已成功，桥接层不会让写操作变成失败；包装不可用时（服务缺失/被替换）退回旧行为并在日志提示。
+
+远程读取采用**单往返合并读**：一条池化命令同时返回 `size/mtime` 帧与文件内容（文本类扩展名优先 raw 直传，字节长 + U+FFFD 双校验失败自动回退 base64，结果逐字节一致）；配合主机侧结果缓存与变更失效（见下节）。
+
+Shell wrapper（`~/.dsh/remote-ssh/dsh-remote-shell[.cmd]`）检测工作区 `.remote-ssh.json`，自动 `ssh -tt` 连接远程，使内置「终端」页签透明接入。
+
+## 缓存与一致性
+
+远程读取与目录列举结果在主机侧缓存（读 LRU 32 条 + 列举 LRU 64 条，TTL 5 秒；单条 >1MiB 不缓存、总量 32MB 字节预算，防止大文件驻留拖慢宿主）：TTL 内重复打开或切回页签 **0 网络往返**；过期后先做一次轻量 mtime+size 复验，未变化则免重传。写、删除、移动、建目录、上传、推送（push）、成功的远端 exec 与变更类 git 子命令（add/reset/commit/checkout/revert/cherry-pick）会自动失效相关缓存，并以每 profile 缓存代（epoch）兜底「同秒同 size 写」等粒度盲区。
+
+已知限制：
+
+- 集成终端（`ssh -tt`）与远端其它进程改动的文件依赖 TTL + 复验兜底，最多 **5 秒**陈旧；
+- **镜像是"本地优先"的读影子（2.4.35 起，issue #29）**：`ctx.fs` 的读方法（`stat` / `lstat` / `resolve` / `readText` / `streamText` / `readBytes` / `readByteRange` / `listDir`）现在**本地有就照旧读镜像，镜像里没有才回远端取**（内置预览、agent 的 `read` 都因此能读到只在远端存在的文件）。两点仍未覆盖：① 文件在远端被其它人改动、而镜像里也有旧版本时，读到的仍是**镜像那份**（本地优先；用 `remote_ssh_sync` 重拉镜像即最新）；② 远端文件的变更**不会**触发实时刷新（`ctx.fs.watch` 对远端影子是空实现），预览不会自动跟新；另外远端整文件读受 4 MiB 单次上限约束；
+- `/sidebar/file` 下载池化路径有效上限约 **6.29MB**，更大文件自动退回一次性连接下载（可成功，多一次重连开销）；
+- 二进制内容伪装成文本扩展名时会多一次 base64 回退往返（结果正确）。
+
+## ❤️ 七夕快乐
+
+本项目是送给 **zhangyi** 的七夕礼物。
+
+愿它像连接起一台台远方的超算一样，也把我们紧紧连在一起。七夕快乐 ❤️
+
+—— 2026 年 8 月 18 日
+
+## 更新日志
+
+版本历史与每版修复细节见 [CHANGELOG.md](./CHANGELOG.md)（最近：2.4.3 适配 better-sidebar 0.19 端点、2.4.2 修复设置图标闪现、2.4.0 命令级超时与 `remote_ssh_kill`）。
+
+## 许可证
+
+[MIT](./LICENSE)
+
+---
+
+如果这个插件帮到了你，欢迎在 GitHub 上点个 ⭐ [Star](https://github.com/ZhangFengshun/dsh-remote-ssh)，或到 [DSH Market](https://dshmarket.com) 收藏——这会帮助更多需要远程超算开发的人找到它。

@@ -1,0 +1,57 @@
+name: tests
+
+# 每次 push / PR 都在 Windows 上跑全量断言。
+# 为什么是 windows-latest 而不是 ubuntu：本仓测试是按 Windows 语义写的（盘符判定、USERPROFILE、
+# 路径分隔符），而"远端是 GNU userland"的部分都走 faked SSH（测试里自己拼命令断言），不需要真主机。
+#
+# 上游对拍用的是**钉住的**版本，保证同一份提交永远得到同一结果；
+# 上游有没有漂移由 upstream-drift.yml 每周单独盯（那份用 @latest）。
+#
+# 预期基线（2.4.31 时）：
+#   · 本机（有 WSL + GNU tar）：28 文件 / 1469 通过 / 0 失败
+#   · CI（windows-latest 没有 WSL）：1433 通过 / 0 失败，其中 unicode-names.test.mjs 整文件跳过、
+#     wrapper-terminal 的场景 10 部分跳过 —— 运行器会把这些跳过逐条打印出来。
+#   判定标准是「失败数为 0 **且** 跳过项都被解释」，不是只看一个绿勾：把整体跳过算成通过，
+#   就会出现"CI 全绿、实际少了 31 条断言"的自欺。
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  full-suite:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      # 这批测试**按目录**去找真实依赖（本仓刻意不装 node_modules，依赖由 profile 提供）：
+      #   · 与「实际安装的 better-sidebar」对拍端点覆盖 → 需要 dsh-better-sidebar
+      #   · module-load 真正 import lib/index.js  → 需要源码里的裸依赖（yaml / schemastery）
+      #   · settings-compat 用真实 schemastery    → 同上
+      # 本机之所以一直是绿的，是因为 DSH 会话环境里有 DSH_PROFILE_DIR 兜底；CI 上没有这个变量，
+      # 所以必须显式装好 —— 第一次流水线正是死在这里（module-load 3 通过 / 6 失败、
+      # settings-compat 抛「找不到依赖: yaml」）。装齐后本地等价环境复跑：1469 通过 / 0 失败。
+      - name: 准备测试依赖（假 profile：上游对拍 + 运行时依赖）
+        shell: pwsh
+        run: |
+          $ver = '0.26.1'
+          $prof = Join-Path $env:USERPROFILE '.dsh\profiles\desktop'
+          New-Item -ItemType Directory -Force -Path $prof | Out-Null
+          Set-Content -Path (Join-Path $prof 'package.json') -Value '{"name":"ci-deps","private":true}' -Encoding utf8
+          # --legacy-peer-deps：只装固定的三件，不跟随上游声明的 peer（理由见 upstream-drift.yml）
+          npm i --prefix $prof --no-save --no-package-lock --no-audit --no-fund --legacy-peer-deps `
+            "dsh-better-sidebar@$ver" 'yaml@2.9.1' '@deepseek-ai/schemastery@3.18.4'
+          $nm = Join-Path $prof 'node_modules'
+          Write-Host ("对拍用上游版本 = " + (Get-Content (Join-Path $nm 'dsh-better-sidebar\package.json') -Raw | ConvertFrom-Json).version)
+          Write-Host ("运行时依赖 yaml = " + (Get-Content (Join-Path $nm 'yaml\package.json') -Raw | ConvertFrom-Json).version)
+          Write-Host ("运行时依赖 schemastery = " + (Get-Content (Join-Path $nm '@deepseek-ai\schemastery\package.json') -Raw | ConvertFrom-Json).version)
+
+      - name: 全量测试
+        run: npm test

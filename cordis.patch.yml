@@ -1,0 +1,46 @@
+# workspace-groups-remote bundle patch
+#
+# Merged bundle: workspace-groups + @zhangfengshun/dsh-remote-ssh in one
+# package. The single insert row below loads the package entry, which
+# composes both plugins. Migration: remove the two old bundles
+# (workspace-groups-local, @zhangfengshun/dsh-remote-ssh) from the profile
+# and add this one instead; stored data (workspace-groups.yaml sidecars,
+# the `dsh-remote-ssh` settings namespace, ~/.dsh/remote-ssh/) is kept.
+- insert:
+    - id: workspace-groups-remote
+      name: 'workspace-groups-remote'
+      config: {}
+# 自动覆盖 better-sidebar 的 shell 配置，指向本插件生成的 shell wrapper。
+# wrapper 脚本在插件 apply() 时写入 ~/.dsh/remote-ssh/dsh-remote-shell[.cmd]：
+#   - 远程工作区（cwd 含 .remote-ssh.json 且 keyPath 非空）→ ssh -tt 连远程
+#   - 本地工作区 → 照常启动本地 shell
+# 路径用 !!js 动态计算，适配不同平台和用户主目录。
+- id: better-sidebar
+  config:
+    shell: !!js |
+      (() => {
+        var homedir = process.env.USERPROFILE || process.env.HOME || process.env.HOMEDRIVE + process.env.HOMEPATH;
+        var isWin = process.platform === 'win32';
+        var sep = isWin ? '\\' : '/';
+        var dir = homedir + sep + '.dsh' + sep + 'remote-ssh';
+        return isWin ? dir + sep + 'dsh-remote-shell.cmd' : dir + sep + 'dsh-remote-shell';
+      })()
+# DSH 0.1.7-rc.2 起，侧边栏终端改由宿主原生的 `terminal-controller`
+# （@deepseek-ai/dsh-api-terminal-controller）管理，它只读自己的 `config.shell`
+# （{ path, name, args }），不再读 better-sidebar 的 shell 配置 —— 因此远程工作区
+# 会静默打开本地 shell。这里把**同一个 wrapper** 也交给原生终端。
+# 旧版 DSH 没有该 entry，patch 目标不存在时会被忽略（无害）。
+- id: terminal-controller
+  config:
+    shell: !!js |
+      (() => {
+        var homedir = process.env.USERPROFILE || process.env.HOME || process.env.HOMEDRIVE + process.env.HOMEPATH;
+        var isWin = process.platform === 'win32';
+        var sep = isWin ? '\\' : '/';
+        var dir = homedir + sep + '.dsh' + sep + 'remote-ssh';
+        return {
+          path: isWin ? dir + sep + 'dsh-remote-shell.cmd' : dir + sep + 'dsh-remote-shell',
+          name: 'Auto SSH / Local',
+          args: []
+        };
+      })()

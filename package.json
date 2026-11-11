@@ -1,0 +1,144 @@
+{
+  "name": "workspace-groups-remote",
+  "version": "1.0.0",
+  "description": "Merged DSH bundle: the workspace-groups sidebar manager (category -> project -> session grouped tree, session tab strip) plus dsh-remote-ssh (VSCode Remote-SSH-like remote development: remote workspaces, file access, integrated terminal) in one installable package.",
+  "keywords": [
+    "dsh",
+    "deepseek-harness",
+    "deepseek-harness-plugin",
+    "dsh-plugin",
+    "plugin",
+    "sidebar",
+    "workspace",
+    "workspace-groups",
+    "client-plugin",
+    "ssh",
+    "remote-ssh",
+    "remote-development"
+  ],
+  "type": "module",
+  "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  },
+  "main": "lib/index.js",
+  "types": "lib/types/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./lib/types/index.d.ts",
+      "default": "./lib/index.js"
+    },
+    "./client": {
+      "types": "./lib/types/client/index.d.ts",
+      "default": "./lib/client.js"
+    },
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib",
+    "!lib/**/*.map",
+    "cordis.patch.yml",
+    "README.md",
+    "README_ZH.md",
+    "NOTICE.md",
+    "workspace-groups.example.yaml"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "inject": [
+        "@deepseek-ai/dsh-api-remotes",
+        "@deepseek-ai/dsh-api-session-controller",
+        "@deepseek-ai/dsh-api-workspace-controller",
+        "@deepseek-ai/dsh-client-connection",
+        "@deepseek-ai/dsh-client-locale",
+        "@deepseek-ai/dsh-client-ui-conversation",
+        "@deepseek-ai/dsh-client-ui-renderer",
+        "@deepseek-ai/dsh-client-ui-session",
+        "@deepseek-ai/dsh-client-ui-sidebar",
+        "@deepseek-ai/dsh-client-ui-workspace",
+        "@deepseek-ai/dsh-client-modules",
+        "@deepseek-ai/dsh-client-ui-primitives",
+        "@deepseek-ai/dsh-client-ui-slots"
+      ]
+    }
+  },
+  "scripts": {
+    "build": "node scripts/build-safe.mjs",
+    "build:inner": "node scripts/build-remote-ssh-client.mjs && node -e \"require('node:fs').rmSync('lib', { recursive: true, force: true })\" && tsc -p tsconfig.build.json --noEmit false --declaration --emitDeclarationOnly --outDir lib/types && tsdown && node scripts/build-bundle.mjs",
+    "build:types": "tsc -p tsconfig.build.json --noEmit false --declaration --emitDeclarationOnly --outDir lib/types",
+    "watch": "node scripts/watch.mjs",
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.client.json --noEmit",
+    "verify": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.client.json --noEmit && npm run verify:bundle && npm run test:patch && vitest run",
+    "vendor:manifest": "node scripts/vendor-manifest.mjs --write",
+    "test": "vitest run",
+    "verify:bundle": "node scripts/verify-bundle.mjs",
+    "test:patch": "node scripts/test-remote-ssh-patch.mjs"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "^4.0.2",
+    "@deepseek-ai/dsh-api-remotes": ">=0.1.7-rc.2 <0.3.0",
+    "@deepseek-ai/dsh-api-session-controller": ">=0.1.7-rc.2 <0.3.0",
+    "@deepseek-ai/dsh-api-workspace-controller": ">=0.1.7-rc.2 <0.3.0",
+    "@deepseek-ai/dsh-client-locale": ">=0.1.7-rc.2 <0.3.0",
+    "@deepseek-ai/dsh-client-store": ">=0.1.7-rc.2 <0.3.0",
+    "@deepseek-ai/dsh-client-ui-primitives": ">=0.1.7-rc.2 <0.3.0",
+    "@deepseek-ai/dsh-client-ui-session": ">=0.1.7-rc.2 <0.3.0",
+    "@deepseek-ai/dsh-client-ui-sidebar": ">=0.1.7-rc.2 <0.3.0",
+    "@deepseek-ai/dsh-client-ui-slots": ">=0.1.7-rc.2 <0.3.0",
+    "@deepseek-ai/dsh-client-ui-workspace": ">=0.1.7-rc.2 <0.3.0",
+    "@deepseek-ai/dsh-host-webserver": ">=0.1.7-rc.2 <0.3.0",
+    "@deepseek-ai/dsh-session": ">=0.1.7-rc.2 <0.3.0",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "@deepseek-ai/dsh-tools": "^0.1.0-rc.6 || ^0.1.5-rc.1 || ^0.1.7-rc.2 || ^0.2.0-rc.1 || ^0.2.1-rc.1"
+  },
+  "peerDependenciesMeta": {
+    "react-dom": {
+      "optional": true
+    }
+  },
+  "dependencies": {
+    "js-yaml": "^4.1.0",
+    "@deepseek-ai/schemastery": "^3.18.4",
+    "yaml": "^2.9.1"
+  },
+  "devDependencies": {
+    "@deepseek-ai/cordis": "^4.0.4",
+    "@deepseek-ai/dsh-api-remotes": "0.2.0-rc.1",
+    "@deepseek-ai/dsh-api-session-controller": "0.2.0-rc.1",
+    "@deepseek-ai/dsh-api-workspace-controller": "0.2.0-rc.1",
+    "@deepseek-ai/dsh-client-locale": "0.2.0-rc.1",
+    "@deepseek-ai/dsh-client-store": "0.2.0-rc.1",
+    "@deepseek-ai/dsh-client-ui-conversation": "0.2.0-rc.1",
+    "@deepseek-ai/dsh-client-ui-primitives": "0.2.0-rc.1",
+    "@deepseek-ai/dsh-client-ui-renderer": "0.2.0-rc.1",
+    "@deepseek-ai/dsh-client-ui-session": "0.2.0-rc.1",
+    "@deepseek-ai/dsh-client-ui-sidebar": "0.2.0-rc.1",
+    "@deepseek-ai/dsh-client-ui-slots": "0.2.0-rc.1",
+    "@deepseek-ai/dsh-client-ui-workspace": "0.2.0-rc.1",
+    "@deepseek-ai/dsh-host-webserver": "0.2.0-rc.1",
+    "@deepseek-ai/dsh-session": "0.2.0-rc.1",
+    "@types/js-yaml": "^4.0.9",
+    "@types/node": "^24.0.0",
+    "@types/react": "~18.3.1",
+    "@types/react-dom": "~18.3.0",
+    "immer": "^11.1.18",
+    "js-yaml": "^4.1.0",
+    "jsdom": "^30.0.1",
+    "lightningcss": "^1.32.0",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "tsdown": "^0.22.2",
+    "typescript": "^5.6.0",
+    "vitest": "4.1.8",
+    "zustand": "^5.0.15"
+  }
+}
