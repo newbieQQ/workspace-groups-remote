@@ -1,0 +1,31 @@
+# dsh-workspace-groups 侧车配置（sidecar config）
+#
+# 本文件控制侧边栏的分类规则：左侧「分类文件夹 → 项目文件夹 → 会话」三层树
+# 的分类如何划分。修改后刷新页面即可生效，无需改代码、无需重启 DSH、不触碰
+# ~/.dsh/storages/workspace.json。
+#
+# 默认路径：~/.dsh/workspace-groups.yaml
+# 规则语义：workspace 按 categories 顺序匹配，第一个命中的分类生效；
+# 未命中任何规则的 workspace 进入「未分类」桶。
+# 每个分类的 rules 是「任一规则命中即归类」的 OR 关系。
+
+categories:
+  # —— DSH 插件 ——
+  - name: DSH 插件
+    rules:
+      - pathPrefix: /Users/zcol/Project/SkillsManagePlugins
+      - pathPrefix: /Users/zcol/Project/Documentation-Driven AI Coding
+      - pathPrefix: /Users/zcol/Project/DeepSeek峰谷小组件
+      - pathPrefix: /Users/zcol/Project/DSH-工作区分组
+      # 也可以按项目名包含规则归类，例如：
+      # - nameContains: 插件
+      # - basenameContains: plugin
+
+  # —— 个人项目 ——
+  - name: 个人项目
+    rules:
+      - pathPrefix: /Users/zcol/Project/yeluzi
+      - pathPrefix: /Users/zcol/Project/闲谝
+
+# 未匹配任何分类的项目（例如日后新增的 /Users/zcol/Project/新项目）会
+# 自动出现在「未分类」桶中，不会被忽略。
