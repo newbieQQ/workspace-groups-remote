@@ -1,0 +1,322 @@
+# @zhangfengshun/dsh-remote-ssh
+
+English | [中文](./README.md)
+
+A **DSH** plugin like **VSCode Remote-SSH**: connect to remote HPC / servers via SSH, and directly operate remote files and terminals within DSH's built-in **Files** and **Terminal** sidebar tabs.
+
+**Contents**: [Features](#features) · [Screenshots](#screenshots) · [Installation](#installation) · [Usage](#usage) · [Examples](#examples) · [Model Tools](#model-tools) · [Command Timeout & Recovery](#command-timeout--recovery) · [Compatibility](#compatibility) · [Troubleshooting](#troubleshooting) · [How It Works](#how-it-works) · [Caching & Consistency](#caching--consistency) · [License](#license)
+
+## Features
+
+| Feature | Description |
+| --- | --- |
+| 🔌 SSH Connection | Key / password auth, ProxyJump bastion, one-click import from `~/.ssh/config` |
+| 📂 Remote Files | Built-in **Files** tab reads/writes remote files directly via SSH — no sync needed |
+| 💻 Remote Terminal | Built-in **Terminal** tab auto-detects remote workspaces, opens an SSH interactive shell **in the workspace's remote directory** (like VSCode Remote-SSH) |
+| 🌐 Remote Workspace | Select a remote directory to create a native workspace, one-click enter |
+| 🤖 Model Tools | 13 `remote_ssh_*` tools, session-aware with auto-filled connection params; command-level timeout + `remote_ssh_kill` recovery |
+| 🗂️ `@` Completion | In a remote-workspace session, `@` completion lists **remote** files (git repos via `git ls-files`, measured 0.1s; bounded `find` otherwise; cached index + 900ms query budget so the caret never stalls) |
+| ⚡ Faster Opens | Single-roundtrip merged reads + raw text fast path + result cache (LRU + 5s TTL): first open ≈**1.31×**, repeat opens within TTL **0 round-trips**, expired revalidation **≈5×** (measured on a real HPC); `remote_ssh_exec` connection reuse **≈15×** |
+
+## Screenshots
+
+**Settings → Remote SSH**: connection profiles (key / password / ProxyJump bastion) · connection test · one-click import from `~/.ssh/config`
+
+<p align="center"><img src="assets/settings-remote-connections.png" width="420" alt="Settings: Remote Connections"></p>
+
+**Built-in Files tab**: browse the remote host directly (the right-hand tree IS the remote directory, edits save back to remote)
+
+<p align="center"><img src="assets/remote-files-tab.webp" width="820" alt="Built-in Files tab browsing remote files"></p>
+
+**Built-in Terminal tab**: auto-SSH to the HPC (SLURM environment shown); the left panel shows the model calling `remote_ssh_*` tools without connection params
+
+<p align="center"><img src="assets/remote-terminal.webp" width="820" alt="Built-in Terminal tab auto-SSH to remote HPC"></p>
+
+## Installation
+
+**Prerequisites**
+
+| Item | Requirement |
+| --- | --- |
+| DSH | ≥ 0.1.5-rc.1, **0.2.0-rc.1 included** (the current official line; on the 0.1.2 stable line, use the v0.18.1-era plugin release). The declared peer range names every verified line explicitly, so the new harness compatibility gate (see [Installation](#installation)) does not block it |
+| dsh-better-sidebar | ≥ 0.15 (this plugin uses its `/sidebar/api/` file API plus 0.24's `open.external` "open with" endpoint; **adapted since 2.4.18**). **This plugin can be installed on its own**: since 2.4.18 a missing better-sidebar no longer stalls web boot (see below), but the remote file tree/editor tab is unavailable without it |
+| Local SSH client | Windows: built-in OpenSSH (`%SystemRoot%\System32\OpenSSH\ssh.exe`); Linux/macOS: openssh-client |
+| Remote host | Any standard sshd (HPC / server / bastion) |
+
+**One command** (no token, API key or extra configuration needed):
+
+```bash
+dsh plugin --profile <name> add @zhangfengshun/dsh-remote-ssh@2.4.45
+```
+
+**Restart DSH** after installation. `@zhangfengshun/dsh-remote-ssh` must come **after** `dsh-better-sidebar` in the bundles list.
+
+> **Installing this plugin without `dsh-better-sidebar` (or if that bundle fails to load)?** Since 2.4.18 it starts cleanly: the client half declares only core services (`slots`/`locale`) as hard dependencies and reaches better-sidebar through a **child-fiber soft inject** — the remote file editor tab registers when it is present and is silently skipped when it is not. What still works: the settings "Remote connections" section (connections + remote workspaces), the model tools (`remote_ssh_*`), remote terminal integration and `@` remote file completion. What does not: the Files tab's remote read/write and the editor tab — that `/sidebar/api/fs.*` channel belongs to better-sidebar (the built-in sidebar uses its own `/api/*`, which this plugin does not take over). Older releases stayed **pending forever** in that setup, so the frontend reported `web boot: 1 entry did not activate` / `pending (waiting for service: betterSidebar)` (issue [#18](https://github.com/ZhangFengshun/dsh-remote-ssh/issues/18)). The host also logs `patch: entry "better-sidebar" not found` when that bundle is absent — `dsh-app-boot` warns unconditionally about missing patch targets, **which is expected and harmless**.
+
+> **On DSH 0.2.0-rc.1+, does the install get refused or the plugin stay invisible?** The new harness judges compatibility from the **DSH peer version ranges a plugin declares**: if the range does not cover the running version, installation/activation is **rejected** (`Plugin … is incompatible with dsh <version>`) and the plugin manager offers a per-version "accept the risk" exemption instead. Since 2.4.16 this plugin lists every verified line explicitly (`^0.1.0-rc.6 || ^0.1.5-rc.1 || ^0.1.7-rc.2 || ^0.2.0-rc.1`), so **no exemption is needed**. If you are on an older plugin version, upgrade rather than clicking "accept the risk". (The check is strict semver: a prerelease runtime is only covered by a range that names that line explicitly — which is why lines like `0.1.5-rc.1` are listed one by one.)
+
+Uninstall:
+
+```bash
+dsh plugin --profile <name> remove @zhangfengshun/dsh-remote-ssh
+```
+
+> ⚠️ **dsh-better-sidebar compatibility (measured 2026-09)**: `0.18.1 / 0.19.0 / 0.19.1` cannot load their host half on DSH Desktop v2.0.9 (DSH 0.1.5-rc.1) — they value-import `SessionLogOffset`, which the desktop module surface exposes only as a type — so the sidebar Files tab falls back to "Nothing here can view this kind of content yet." Use **0.18.0** or a build carrying the fix; this plugin supports both contracts (4 endpoints on 0.18, 6 including `fs.rename`/`fs.remove` on 0.19).
+
+## Usage
+
+**Three steps**
+
+1. **Settings → Remote SSH** → Add a connection (host / port / user / key) → Click "Test Connection"; an existing `~/.ssh/config` can be imported in one click
+2. **Add Workspace** → Choose "Select Remote Directory…" → Pick a connection → Browse and select a remote directory (it becomes a native DSH workspace); if the directory does not exist yet, click "📁 New folder" to create it in place (both the local and remote tabs) — the picker then enters it automatically
+3. Inside that workspace session: the built-in **Files** tab shows remote files (edits save straight back to remote), and the **Terminal** tab auto-SSHes **into the workspace's remote directory** (key auth only)
+
+**Just ask the model** (connection params are auto-filled inside a remote-workspace session):
+
+```text
+What's inside /home/user/project? Then fix line 20 of train.py
+Run squeue -u $USER and summarise the queue as a table
+Grep every ERROR line from the *.log files in this directory
+```
+
+## Examples
+
+**1 · Run a remote command** (`remote_ssh_exec`, 120s timeout by default):
+
+```json
+{
+  "command": "sinfo -h -o '%P %a %D %t %N' | head -20",
+  "timeoutMs": 30000
+}
+```
+
+Returns `{ ok, exitCode, stdout, stderr, error, truncated, isTimeout }` — e.g.
+
+```json
+{ "ok": true, "exitCode": 0, "stdout": "cpu* up 12 idle 8 ...\n", "stderr": "", "error": "", "truncated": false, "isTimeout": false }
+```
+
+**2 · Read / write files (no sync needed)**:
+
+```json
+{ "path": "~/project/config.yaml", "content": "lr: 0.001\nepochs: 50\n" }
+```
+
+```json
+{ "path": "~/project/train.py" }
+```
+
+`remote_ssh_cat` transfers base64 (binary-safe); `remote_ssh_write` is atomic (temp file + rename).
+
+**3 · Long jobs and hung-command recovery**:
+
+```json
+{ "command": "cd ~/project && bash run_train.sh", "timeoutMs": 0 }
+```
+
+```json
+{ "all": true }
+```
+
+`timeoutMs: 0` disables the timeout for that call; `DSH_REMOTE_SSH_CMD_TIMEOUT_MS=600000` changes the global default. Timed-out pooled sessions are discarded and rebuilt, and `remote_ssh_kill` is the manual hatch.
+
+**Remote semantics (spelled out since 2.4.44)**: `timeoutMs` is only a **local wait budget** — on expiry the plugin abandons the wait and discards the session, but it **does not terminate the remote command** (the remote process may keep running; its output is no longer forwarded; disconnecting or quitting DSH behaves the same). Use the remote `timeout <seconds> <command>` when you need a hard remote limit. Only **pressing the stop button** and `remote_ssh_kill` mean "terminate": both best-effort SIGHUP the remote shell's process group (waiting up to 4s; same semantics as closing a terminal, so `nohup` / `setsid` jobs survive).
+
+**4 · Tool calls inside a remote workspace** (`profileId` omitted, relative paths resolve against the remote root):
+
+```json
+{ "path": "configs/exp1.yaml" }
+```
+
+**5 · Import connections from `~/.ssh/config`**: Settings → Remote SSH → "Import SSH config" → tick hosts → host / user / port / keyPath / ProxyJump are filled in.
+
+**6 · Mirror sync and push-back** (review offline, then upload in one shot):
+
+```json
+{ "workspaceId": "w_xxx" }
+```
+
+```json
+{ "workspaceId": "w_xxx" }
+```
+
+`remote_ssh_sync` pulls the remote tree into the local mirror; `remote_ssh_push` sends mirror changes back (tar over ssh, batched).
+
+**Since 2.4.20 sync is a guarded whole-tree operation.** The order is fixed: *size sentinel → extract into a temp directory → (whole-tree) compare "mirror-only files" → atomic swap*. If any step fails, the old mirror is left untouched.
+
+| Parameter | Effect |
+| --- | --- |
+| `paths` | Only sync these sub-paths (relative to the remote root), e.g. `["src","docs"]`. **A partial sync only overwrites those sub-paths and deletes nothing else in the mirror.** |
+| `exclude` | Exclude rules (relative to the remote root, `*` supported), pushed down as `tar --exclude=./x`, e.g. `["data","*.log"]` |
+| `force` | Explicit confirmation: skip the size sentinel and the mirror-only-file guard (only when you really mean a whole-tree copy) |
+| `maxBytes` | Size limit for this sync, overriding the workspace setting and the **2 GiB** default |
+| `timeoutMs` | Wall-clock budget for this sync, **10 minutes** by default (0 = unlimited) |
+
+```json
+{ "workspaceId": "w_xxx", "paths": ["src"], "exclude": ["data", "*.log"] }
+```
+
+- **Size sentinel**: before deleting anything it runs `du -sb -c -- <this scope>` (15 s budget, only the scope being synced). Over the limit, probe timeout, no `du` on the remote, unparsable output — **all refused**, requiring an explicit `force: true`. Default 2 GiB (`syncMaxBytes` field or `DSH_REMOTE_SSH_SYNC_MAX_BYTES`).
+- **Mirror-only files are never deleted silently**: before a whole-tree swap the old mirror is compared with the pulled result; if files exist locally that the remote does not have, the sync is refused with a list (up to 20), telling you to either `remote_ssh_push` them first or retry with `force: true`. The plugin's own `.remote-ssh.json` and placeholder `README.md` are recognised by content fingerprint and excluded from the list.
+- **`push` no longer pollutes the remote root**: `.remote-ssh.json` (connection details) is always excluded, as is the plugin's placeholder `README.md` — a `README.md` you wrote yourself is untouched.
+- ⚠️ **`exclude` does not filter paths listed explicitly in `paths`** (tar does not apply `--exclude` to command-line members): to drop a large directory, list its parent in `paths` so the directory becomes a member rather than a target. Also note that an exclude pattern matching nothing is **neither an error nor a warning** (tar semantics), so "I passed an exclude and nothing happened" is not evidence that the option was dropped.
+- **The mirror is an outbound buffer, not a remote snapshot**: the agent's `write` updates both the mirror and the corresponding remote file, and `remote_ssh_push` is the channel that carries such changes back. To read the current remote content inside a session use the Files tab or `remote_ssh_cat` — the mirror may be stale.
+- **Write-back bridge (issue #24)**: after `write`/`edit` lands in the local mirror, the same content is pushed to the remote. Since 2.4.24:
+  - **content over 4 MiB is pushed too** (chunked base64 appends plus a remote byte-count check) — previously this failed deterministically with only a log line, so the model assumed the remote already had the file;
+  - **a failed push is reported as an error** stating that the local mirror write succeeded and pointing at `remote_ssh_push`. Restore the log-only behaviour with `writeBackFailure: "log"` (or `DSH_REMOTE_SSH_WRITEBACK_FAILURE=log`) — **since 2.4.26** that mode also writes guard B's full remedy report to the log (it used to log one short line, i.e. "report instead of push" with no report at all);
+  - **keep drafts off the remote** with a per-workspace `writeBack: false`, or exclude paths via `writeBackExclude` (mirror-relative, `*` / `**` / `?`, trailing `/` = directory prefix), e.g. `["_patch/**", "*.log"]`.
+  - **Guard B (since 2.4.25, on by default) — look before you push**: after a successful push the plugin records the remote's `size:mtime` (`~/.dsh/remote-ssh/writeback-mtimes.json`); before pushing the same path again it re-checks and, **if the remote changed or the file is gone, it does not push** and reports an error saying the local mirror write succeeded, pointing at `remote_ssh_sync` (pull and compare) and `remote_ssh_push` (overwrite deliberately). On a shared cluster the most common "other writer" is **your own finished job** — this is exactly the "job updated the remote, mirror was stale, agent overwrote it" case.
+    - The comparison happens **only on the remote's own timeline** (never remote-vs-local mtime: clock skew and tar/base64 rewrites make the two incomparable). **Unreadable ≠ changed**: a failed `stat` or a flaky ssh connection counts as "unknown state" and the push proceeds with a log line.
+    - Records are cleared after an explicit remote write (`remote_ssh_write`, Files-tab save) and after a successful `remote_ssh_push` / `remote_ssh_sync` (mirror and remote agree again) — which is also the documented way out when guard B blocks you.
+    - **Turn it off** with `writeBackFreshness: false` or `DSH_REMOTE_SSH_WRITEBACK_FRESHNESS=off` (back to unconditional overwrite).
+  - **All of these are reachable in the settings panel** (since 2.4.25): Settings → this plugin → "Write-back & terminal (advanced)" holds `nodePath` / `writeBackFailure` / `writeBackFreshness`, and each remote workspace has its own "enable write-back + write-back excludes" controls.
+
+## Model Tools
+
+| Tool | Purpose |
+| --- | --- |
+| `remote_ssh_profiles` | List saved connections + current session's remote workspace context |
+| `remote_ssh_exec` | Execute remote command (default 120s **local wait budget**; `timeoutMs` to relax/disable; cancelling SIGHUPs the remote process group) |
+| `remote_ssh_kill` | Force-close pooled SSH sessions and best-effort SIGHUP the remote process group (recovery for hung commands) |
+| `remote_ssh_ls` | List remote directory |
+| `remote_ssh_cat` | Read remote file |
+| `remote_ssh_write` | Write remote file |
+| `remote_ssh_grep` | Search remote file contents |
+| `remote_ssh_glob` | Find remote files by glob |
+| `remote_ssh_mkdir` | Create remote directory |
+| `remote_ssh_delete` | Delete remote file/directory |
+| `remote_ssh_move` | Move/rename |
+| `remote_ssh_sync` | Sync remote to local mirror (**whole tree**: narrow it with `paths`/`exclude`, oversized roots are refused, mirror-only files are never deleted silently) |
+| `remote_ssh_push` | Push local mirror back to remote (the plugin's own `.remote-ssh.json` and placeholder `README.md` are always excluded) |
+
+In a remote-workspace session, `profileId` and other connection params can be omitted. All file/command tools run over the persistent SSH session pool + result cache; `remote_ssh_exec` measures ≈15× faster per command.
+
+## `@` File Reference Completion
+
+In a remote-workspace session, typing `@` offers **remote** candidates (matching the Files tab tree) instead of the local mirror directory:
+
+- **Index source**: git repos use `git ls-files --cached --others --exclude-standard` (respects `.gitignore`, includes untracked files; measured 0.117s / 137 entries on a real HPC), non-git directories fall back to a bounded `find` (`maxdepth 5` + pruning, measured 1.57s / 3121 entries);
+- **Exclusion happens remotely, before truncation** (fixed in 2.4.8): `git ls-files --cached --others` output is **not globally sorted** (untracked files come first in readdir order), so a `node_modules/` tree can fill the first 20,000 lines and exhaust the quota — the excluded directories are therefore filtered by a remote `grep -vE` *before* `head` (same source of truth as the `-prune` list), with the client-side filter kept as a second line of defence; hitting the index cap now logs a warning that files may be missing;
+- **Query semantics mirror the official provider**: `@` and `@src/` list a remote directory; `@read` runs the fuzzy index (exact name > prefix > name substring > path substring > subsequence, directories +25);
+- **The caret never stalls**: the index is cached per workspace for 60s (invalidated after writes/commands) and a single completion waits at most 900ms — on timeout the stale index answers and the rebuild continues in the background; connection failures fall back to local behaviour;
+- **Local workspaces are untouched**: non-remote sessions delegate straight to the host implementation.
+
+## Command Timeout & Recovery
+
+All SSH commands default to a **120-second** timeout (issue #5): a hung remote command (network stall, stuck remote process, `cat` waiting on stdin) can no longer occupy the session forever and block every later command.
+
+- **Automatic recovery on timeout**: the pooled session is discarded and rebuilt automatically, so subsequent commands keep working; one-shot connections terminate the SSH process;
+- **Explicit budgets**: `remote_ssh_exec` accepts `timeoutMs` (milliseconds) per call, `0` disables the timeout (long builds/training); the `DSH_REMOTE_SSH_CMD_TIMEOUT_MS` environment variable overrides the global default;
+- **Manual hatch**: `remote_ssh_kill` (or `all: true`) force-closes one or all pooled sessions at any time;
+- **Cancel vs timeout vs kill**: pressing stop or calling `remote_ssh_kill` best-effort **terminates the remote process group** (SIGHUP, up to 4s); a `timeoutMs` expiry or a dropped connection only **abandons the wait** — the remote command may keep running (use the remote `timeout` for a hard limit);
+- Timed-out commands are **never auto-retried** (retrying a hung command just hangs again) — the model decides whether to kill the session or retry differently.
+
+## Compatibility
+
+**Measured matrix** (2026-09-12, all verified on real machines):
+
+| Component | Version | Status |
+| --- | --- | --- |
+| DSH | 0.1.5-rc.1 (DSH Desktop v2.0.9) | ✅ host services / settings / tools / slots / upload & download interception all compatible |
+| DSH | **0.2.1-rc.1** (DeepSeek Harness desktop nightly, measured 2026-10-17) | ✅ supported since 2.4.32: the trust source moved from the now-removed `ctx.webRuntime.trustedHosts` to **`ctx.webStartup.trustedHosts`** (both are soft-injected, so an older host falls back to the old source and a host with neither stays loopback-only), which makes the documented `--trusted-host` remote-access path work again; the three DSH peers now name `^0.2.1-rc.1` explicitly, so the compatibility gate **no longer depends on the host passing `includePrerelease`**; an API-by-API review found `webServer`/`subprocess`/`settings`/`slots`/`locale`/`defineTool`/cordis lifecycle unchanged (13 tools register, `testConnection` measured 200) with zero plugin warnings or errors. ⚠️ The host's new "the listener's bind IP is trusted" exception is **not** mirrored on purpose (this plugin's routes sit outside the host's browser-token gate; use an explicit `--trusted-host` for remote access) |
+| DSH | **0.2.0-rc.1** (DeepSeek Harness desktop nightly, 2026-09-28) | ✅ adapted and verified on a real runtime since 2.4.16: the peer range names that line explicitly (otherwise the harness **refuses to install/activate** the plugin); the new `settings` API and the legacy-data migration keep working (a fresh profile restores every connection and workspace on its first boot); the terminal patch still lands on `terminal-controller`. The client inject list drops `dsh-client-runtime`, which the runtime no longer ships; 2.4.17 fixes the invisible workspace globe badge on a light theme (its colour now follows the icon's computed colour) |
+| DSH | **0.1.7-rc.2** (DSH Desktop v2.0.15) | ✅ since 2.4.15: the new `settings` API (`configure`/`describe`/`update`, data stored in this plugin's entry Config with `.volatile()` fields) plus a **one-time migration of the retired `settings.yaml`** (connection/workspace ids and mirrorPaths preserved — nothing to rebuild); the sidebar terminal is now owned by the host's native `terminal-controller`, and the bundle patch covers it as well as `better-sidebar` |
+| DSH | 0.1.5-rc.1 / 0.1.6 / 0.1.0-rc.6 lines | ✅ host services / settings / tools / slots / upload & download interception all compatible (still covered by the peer range); ⚠️ **2.4.40 and earlier** mis-detect the settings generation on this line (both APIs present → takes the 0.1.7+ branch → reads come back empty, writes throw `namespace not registered`: the connection list stays empty and import/save do nothing — issue #34). **Fixed in 2.4.41** |
+| DSH | 0.1.2-rc.1 stable line | ✅ (the 2.3.x-era baseline) |
+| dsh-better-sidebar | 0.15.0 – 0.18.0 | ✅ `fs.tree`/`fs.read`/`fs.write` + `fs.search` (the `{ matches: cwd-relative '/'-separated paths, truncated }` contract, since 2.4.11; returning only `entries` used to crash the whole Files tab on search) |
+| dsh-better-sidebar | 0.19.x | ⚠️ this plugin already supports the 6-endpoint contract (incl. `fs.rename`/`fs.remove`); 0.19.0/0.19.1 themselves cannot load their host half on DSH Desktop until upstream fixes it (see the warning under [Installation](#installation)) |
+| dsh-better-sidebar | **0.25.0 – 0.26.1** | ✅ **supported since 2.4.28 – 2.4.31**: every git-panel endpoint (`git.*`, 18 of them: status / diff / log / stage / commit / checkout / blame / worktrees / pull / push …) is now intercepted by exact routes and **runs on the remote host** (before that, the git panel of a remote project showed the **local mirror** repo); 0.25.0's `fs.createFile` and 0.26.1's `fs.readPage` (paged preview of large files) match upstream semantics field by field |
+| dsh-better-sidebar | **0.28.0 – 0.28.2** (measured 0.28.2) | ✅ **supported since 2.4.32 / 2.4.42**: 0.28.0's dispatch table grew from 42 to 43 methods; the only addition, **`git.graph` (paged commit graph)**, is now intercepted (sha256 snapshot cursor, `graph-stale` 409 / `graph-limit` 400); **0.28.2 added `git.history`** (the paged fallback used when the graph exceeds its branch limit) → **intercepted since 2.4.42** (before/after snapshot of all refs + HEAD + shallow, still 2 SSH round trips per page). Without that interception a remote workspace pages through history from the **local mirror** repo (the reason `upstream-drift` went red on 2026-11-02). The already-intercepted **`git.status`** now returns 0.28.0's shape (`upstream`/`ahead`/`behind`/`detached`/`operation` plus per-entry `staged`/`unstaged` line counts and the 2000-row truncation), fetched remotely in a **single SSH round trip**. The 10 `fs.*` methods, `/sidebar/file` and `open.external` are **byte-identical** to 0.26.1 and needed no change |
+| dsh-better-sidebar | **not installed / failed to load** | ✅ **boots normally since 2.4.18** (no more `web boot` block, see [Installation](#installation)): the settings "Remote connections" section, model tools, remote terminal and `@` completion keep working; ⚠️ the Files tab's remote read/write and the editor tab are unavailable (`/sidebar/api/fs.*` belongs to better-sidebar; the built-in sidebar uses its own `/api/*`). The host logs a `patch: entry "better-sidebar" not found` warning, which is expected |
+| Remote sshd | standard OpenSSH (Linux / HPC / Windows) | ✅ key auth; ✅ password auth (Windows uses the system OpenSSH `SSH_ASKPASS` channel, zero dependency and the helper is auto-placed in an ASCII-only directory; POSIX still needs `sshpass`) |
+
+The plugin never patches DSH sources or injects into the profile dependency tree — everything mounts through the official `cordis.patch.yml` + profile mechanism.
+
+## Troubleshooting
+
+| Symptom | Cause and fix |
+| --- | --- |
+| "Test Connection" reports `Permission denied (publickey)` | ① key has a **passphrase**: the plugin runs in batch mode (`BatchMode=yes`) and cannot prompt — load it with `ssh-add` first, or strip the passphrase; ② on a Windows host where the user is in Administrators, the public key must go to `C:\ProgramData\ssh\administrators_authorized_keys`; ③ the username spelling (`user` / `.\user` / `user@domain`) must match a manual connection |
+| **Password auth reports `Permission denied`** and the diagnostics contain `ssh_askpass: posix_spawnp: No such file or directory` or `CreateProcessW failed error:2` | Known issue up to 2.4.42 (issue [#36](https://github.com/ZhangFengshun/dsh-remote-ssh/issues/36)): when the Windows user name contains non-ASCII characters (Chinese, etc.) both `%USERPROFILE%` and `%TEMP%` are non-ASCII, while Windows OpenSSH starts the askpass helper via a **narrow-character path** — the helper never runs, so ssh sends an **empty password** (and the error was mis-attributed to "public key auth failed / check keyPath"). **Since 2.4.43** the helper goes to `C:\ProgramData\dsh-remote-ssh` → `C:\Users\Public\dsh-remote-ssh` → the user directory, picking the first ASCII-only writable spot; you can also set `DSH_REMOTE_SSH_ASKPASS` to an explicit `.cmd` helper in an ASCII-only directory (two lines: `@<nul set /p x="%RSSH_ASKPASS_PW%"` and `@echo.`). Delete the old `~/.dsh/remote-ssh/askpass.cmd` after upgrading and retry |
+| Key auth fails after launching `dsh web` from git-bash | Fixed in 2.3.9: on Windows the ssh binary is pinned to the system OpenSSH absolute path (previously Git's MSYS2 ssh was picked up) |
+| Sidebar Files tab says "Nothing here can view this kind of content yet." | `dsh-better-sidebar` host half failed to load: 0.18.1 / 0.19.0 / 0.19.1 hit the `SessionLogOffset` runtime import on DSH Desktop — downgrade to 0.18.0 or use a fixed build (upstream PR [#641](https://github.com/omdsh-dev/DSH-better-sidebar/pull/641)) |
+| The frontend shows `Failed to load plugins` / `web boot: 1 entry did not activate` / `@zhangfengshun/dsh-remote-ssh: pending (waiting for service: betterSidebar)`, and Desktop offers plugin recovery | Known issue up to 2.4.17 (issue [#18](https://github.com/ZhangFengshun/dsh-remote-ssh/issues/18)): the client half declared better-sidebar's service as a **hard dependency**, so without that bundle the entry stayed pending forever (a cordis fiber does not activate while any injected key is missing). **Upgrade to 2.4.18**, or install `dsh-better-sidebar` (matching your harness line) and restart |
+| Built-in Terminal tab cannot connect | The terminal is an `ssh -tt` interactive channel and supports **key auth only**; password-auth profiles fall back to a local shell and now print a one-line notice (so a local shell is not mistaken for a remote one) — use the Files tab and the model tools for password auth |
+| "Test Connection" reports **`the configured private key file does not exist`** (or the raw output shows `Warning: Identity file … not accessible`) | Since 2.4.19 this is called out first: the `keyPath` of the connection points at a private key file that does not exist on this machine (typo, key not synced to a new machine, or `~` not resolving there). Point `keyPath` at the right file, or **clear `keyPath`** to rely on ssh-agent / `IdentityFile` from `~/.ssh/config`. Note that Test Connection runs in batch mode and cannot prompt for a passphrase (run `ssh-add` first) |
+| **Is a `Host` block in `~/.ssh/config` inherited?** (issue [#21](https://github.com/ZhangFengshun/dsh-remote-ssh/issues/21)) | Three layers: ① **Importing is not runtime inheritance** — "Import from `~/.ssh/config`" copies that block's HostName/User/Port/IdentityFile/ProxyJump **into the connection profile**; later edits to `~/.ssh/config` do not sync (re-import to refresh). ② **The profile wins at connect time** — the plugin always targets `user@host` and **always** passes `-p <port>` (22 when empty), and command-line options override ssh config, so **port and user must be correct** (import fills them); only `keyPath` and `proxyJump`, when left **empty**, fall back to the config's `IdentityFile`/`ProxyJump`. ③ **Aliases and everything else** — put a `Host` alias in "Host" and every option the plugin does *not* pass explicitly (`ProxyCommand`, `Compression`, `Ciphers`, `SetEnv`, …) is still applied by ssh itself, while the plugin's own `-o` values (`StrictHostKeyChecking=accept-new`, `ConnectTimeout=15`, `ServerAliveInterval=30`, `ServerAliveCountMax=3`, `ClearAllForwardings=yes`, plus `BatchMode=yes`/`PreferredAuthentications=publickey` for non-interactive sessions) override same-named ones. On the import side only `Host` blocks are parsed (`Include` is followed recursively), names containing `*`/`?` are skipped (so a global `Host *` is never imported — ssh still applies it when connecting), and `Match` blocks are not parsed (their directives are attributed to the previous `Host`) |
+| The server asks for **QR-code / one-time-password / 2FA** (`keyboard-interactive`) and Test Connection still fails | Test Connection and all file/tool capabilities use the **non-interactive public-key channel** (`BatchMode=yes` + `PreferredAuthentications=publickey`), so no QR prompt is ever shown — that is deliberate (batch, concurrent and unattended calls cannot wait for a human scan). **Use the built-in Terminal tab for interactive logins** (`ssh -tt`, no BatchMode: QR codes, passwords and OTPs all work there); to make file/tool capabilities work, add this machine's public key to the remote `~/.ssh/authorized_keys` (a `Permission denied (publickey,password,keyboard-interactive)` line only means the server *offers* those methods — it does not mean this plugin can use them) |
+| Terminal opens in the remote `$HOME` instead of the workspace directory | Fixed in 2.4.5 (the wrapper `cd`s into the workspace `remotePath`, falling back to `$HOME` when it no longer exists); if it still starts in `$HOME`, make sure 2.4.5 is installed and DSH restarted |
+| Files tab tree root shows the mirror directory id (e.g. `wmirror3`) | Fixed in 2.4.6: the root row now shows the **remote directory name** (e.g. `my-project`) with the full remote path on hover; that label never passes through the `fs.*` routes, so the client renders the replacement |
+| `@` completion only finds the few files in the mirror | Fixed in 2.4.7: in a remote-workspace session `@` now lists remote files (60s index cache + 900ms query budget); if only mirror files show up, make sure 2.4.7 is installed and DSH restarted |
+| In a large repo `@` cannot find real files (e.g. root `AGENTS.md`, `src/**`) | Fixed in 2.4.8: exclusion used to run *after* truncation, so a `node_modules/` tree could exhaust the index quota; exclusion now happens remotely (`grep`/`-prune`) before truncation, and hitting the cap logs a warning |
+| The remote directory you want does not exist yet and "Add Workspace" cannot create it | Fixed in 2.4.9: the directory picker has a "📁 New folder" button (both tabs) — type a name to create it in place and enter it automatically |
+| Accessing from the LAN / another device makes every file capability return 403 | Fixed in 2.4.10: the trust fence now reads the host's `ctx.webRuntime.trustedHosts` (same source as the `/api` gateway). Add the address to the DSH trust list — start with `--trusted-host <host[:port]>`, or access through your paired remote-access setup; with nothing configured the behaviour is unchanged (loopback only) |
+| The Files tab's "search by file name" crashes with `Cannot read properties of undefined (reading 'length')` | Fixed in 2.4.11: the `fs.search` interception returned only `entries`, while better-sidebar's client contract is `{ matches, truncated }`; it now provides `matches` (cwd-relative, `/`-separated, matching upstream's own implementation) and keeps `entries` |
+| "Search by file name" spins forever in a remote workspace (large trees) | Fixed in 2.4.11: shallow-first (`-maxdepth 3`, measured 0.68s cold / 0.11s warm) **returning as soon as anything matches** (the deeper pass becomes a background cache warm-up and only runs synchronously when the shallow pass finds nothing), noise directories pruned before traversal, the short-circuit-blocking `sort` removed, and a remote wall-clock budget that returns the **partial results collected so far** and flags them as incomplete. Measured on an 大型项目 workspace: 5 minutes with zero output before → **43 matches in 0.96s** now |
+| In a remote session `@filename` shows no candidates, while a bare `@` works | Fixed in 2.4.11: fuzzy queries rely on the index, and the index preferred `git ls-files --cached --others` (`--others` must walk the whole working tree and never finishes on huge projects → empty index). It now degrades in three budgeted steps (full git 6s → index-only git 3s → bounded `find` `maxdepth 3` + 5s) and falls back to a bounded `find` (measured 0.65s) whenever the index is not ready yet, so candidates are never empty |
+| Install right after a release fails with `minimumReleaseAge` / `ERR_PNPM_MINIMUM_RELEASE_AGE_VIOLATION` / "No matching version" | Two layers of supply-chain freshness policy: ① **npm metadata propagation** (usually 1–5 minutes — if `npm view` cannot see the new version yet, this is the layer); ② the **DSH Desktop plugin manager installs with pnpm**, whose `minimumReleaseAge` window is **24 hours in practice** — for about a day after a release the manager refuses to install it (see `<profile>/.plugin-manager/logs/*/pnpm.log`, which prints the cutoff). Retry once the window has passed. **To install immediately**, add the package **name** to `minimumReleaseAgeExclude` in `<profile>/pnpm-workspace.yaml` — measured on pnpm 11.7: the *resolution* path (installing a version newer than the lockfile) only matches the **name-only** form; the `name@version` form is honoured by the *lockfile verification* alone, so a fresh release still gets `ERR_PNPM_NO_MATURE_MATCHING_VERSION` with a pinned entry |
+| **On another computer the remote workspace folder icon has no globe badge that this machine shows** | That badge is a client-side DOM decoration (the shell's workspace rows only expose a fixed folder primitive — there is no per-workspace icon API), so it needs: the client half to be loaded → the host to return remote workspaces → the row text/attributes to match the workspace title → the shell DOM to be unchanged → **the badge colour to be visible in that theme**. Since 2.4.17 the colour is taken from the folder icon's own computed colour (visible in light and dark themes; it used to be a hard-coded white that was **invisible on a light theme**), matching normalises whitespace and also accepts `title`/`aria-label`, and a self-check was added. **Diagnose** by running `window.__dshRemoteSshGlobeStats(true)` in the devtools console: `undefined` means the client half did not load (upgrade the plugin and hard-refresh the page); `remoteWorkspaces: 0` means the host returned no workspaces (check plugin/harness compatibility); `remoteWorkspaces > 0` with `globesInDom: 0` means the title or DOM did not match (compare `titleSamples` with what the sidebar actually shows) |
+| `remote_ssh_push` / `remote_ssh_sync` report `returned invalid output` even though the push succeeded | Fixed in 2.4.13: their shared output schema marked `error` as required while the success path returned an undeclared `remotePath`/`mirrorPath`, so **only success failed** (failures validated fine). The schema now declares both path fields, `error` is optional, the success paths carry `error: ""`, and every output schema in the file treats `error` as optional |
+| Sync refused: "exceeds the sync limit" / "could not confirm the remote size within 15 s" | The **size sentinel** introduced in 2.4.20: it measures before deleting anything, with a **2 GiB** default limit — a code+datasets mixed remote root hits it routinely. Three ways out: (1) `paths: ["src"]` to sync just what you need (recommended); (2) `exclude: ["data"]` to drop large directories; (3) `force: true` if you really want the whole-tree copy. Tune the limit with the workspace `syncMaxBytes` field or `DSH_REMOTE_SSH_SYNC_MAX_BYTES` |
+| Sync refused: "will delete N files that exist only in the mirror" | That is the **data-loss guard**: those files (typically writes >4 MiB that never made it back, or a failed push) would vanish in a whole-tree swap. Run `remote_ssh_push` first, or retry with `force: true` to accept the loss. The plugin's own `.remote-ssh.json` and placeholder `README.md` are not counted |
+| A sync never returns | Since 2.4.20 sync/push have a wall-clock budget (10 minutes by default, `timeoutMs`, 0 = unlimited); on expiry both ends are terminated and the **old mirror is untouched**. Releases ≤2.4.19 had no timeout and could only be killed |
+| **A connection with ProxyJump set: the built-in Terminal tab exits immediately (255, `no argument after keyword "-j"`)** | Fixed in 2.4.21: the terminal wrapper inserted `-J` **between `-o` and its value**, so ssh read `-J` as the keyword of `-o` (lowercased, hence `-j` in the message) and reported "no argument". Upgrade to **2.4.21** and restart DSH (the wrapper is rewritten on every plugin load, so nothing under `~/.dsh/remote-ssh/` needs deleting). Workaround on older versions: clear that connection's ProxyJump (only viable if the target host is directly reachable) |
+| **After a push the remote root contains `.remote-ssh.json` / `README.md`, or `exclude` seems to do nothing** | **A 2.4.20 regression, fixed in 2.4.22**: excludes for the *sync* direction must carry shell quotes (they are interpolated into a remote command string), but the same helper was also used for *push*, where the strings are **argv elements** handed to the local tar (no shell) — the quotes became literal pattern characters, so every `--exclude` failed silently, including the two hard-coded ones. Upgrade to **2.4.22** and restart DSH; **if you already pushed**, delete the stray `.remote-ssh.json` and `README.md` from the remote root (same sizes as those files in the local mirror) |
+| **On Windows, non-ASCII file names come back mangled after a pull (`报告_2026Q1.csv` → `鎶ュ憡_2026Q1.csv`) while the contents are intact** | **Fixed in 2.4.23 (issue #22)**. Three parties each assumed something different: the remote GNU tar writes short non-ASCII names as a **plain ustar header** (raw UTF-8 bytes in the name field — no PAX record, no charset declaration), while Windows' bundled `tar.exe` (bsdtar 3.8.8) decodes that field using the **local ANSI code page** (CP936 on a Chinese system) — **exit code 0, empty stderr**, only the name rewritten — and that build does not support `--hdrcharset` either. The fix makes the remote emit `--format=pax` (the `path=` record carries the correct UTF-8 name), probed per profile and cached, with **zero size overhead** measured. Upgrade to **2.4.23** and restart DSH. **Mirrors that are already mangled**: do *not* reach for `force: true` (it would discard any edits you made to those copies) — the first whole-tree sync lists the `mangled → correct` pairs; either pass `repairNames: true` to let the plugin clean them up (remote wins), or rename them locally first and `remote_ssh_push` |
+| **A sync reports "N suspected legacy mojibake file names"** | Those are not mirror-only files but rewrites left by ≤2.4.22 pulling non-ASCII names on Windows (issue #22). Retry with `repairNames: true` to clean them (a whole-tree sync removes them with the atomic swap; a scoped sync deletes them and prunes the emptied directories). The plugin only removes entries proven to be the GBK rewrite of a correct name that exists on the remote — if any genuinely mirror-only file is present in the list it still refuses, and never deletes a real file under the pretext of a repair |
+| **On DSH Desktop the Terminal tab flashes and exits (`'node' is not recognized…`)** | **Fixed in 2.4.24 (issue #23)**. The generated wrapper called a bare `node`, while Desktop **by design** keeps its bundled node off the child PATH (only package operations go through `packageManager`; the bundled runtime exists to be invoked by absolute path). Any machine without node on PATH therefore could not open the terminal at all — nothing to do with SSH, keys or jump hosts. Since 2.4.24 the wrapper bakes in an **absolute** node path (`nodePath` setting → `DSH_REMOTE_SSH_NODE` env → **the interpreter actually running this plugin**, `process.execPath`), falls back to PATH, and otherwise prints an actionable error (naming this plugin, why Desktop has no node, and how to configure it) and exits 127. **Note that the 2.4.24 resolution was too strong a claim for the officially packaged build**: there `execPath` is `DeepSeek Harness.exe`, `DSH_DESKTOP_NODE_EXECUTABLE` is absent from the child environment and no node sits next to it — all five candidates missed (the reporter verified this line by line against the packaged artifacts, issue #23 second round). **Since 2.4.25** there are two more fallbacks: `%DSH_HOME%\dsh-runtimes\*\dependencies\node\bin\node.exe` (`DSH_HOME` being the generic root the host exports) and `<install dir>\resources\runtime\*\dependencies\node\bin\node.exe` (derived from `process.execPath`; a `process.resourcesPath` probe covers the rest). The runtime instance name is **not hard-coded** (`primary` first, then by name) and every candidate must pass `existsSync`; whichever one wins is logged. Upgrade to **2.4.25** and restart DSH (the wrapper is rewritten on every load). If it still fails, the most direct fix is to **type the absolute node path into `nodePath` in the settings panel** (since 2.4.25 that field lives under "Write-back & terminal (advanced)" instead of only in the config file) |
+| **`write` / `edit` report success but the remote has no such file (e.g. content over 4 MiB)** | **Fixed in 2.4.24 (issue #24)**. The write-back bridge only logged a host-side warning on failure: ① content over 4 MiB was stopped by `MAX_BYTES` (one log line, CSV or notebook is enough), ② every other failure (dropped ssh, permissions, quota) was equally silent — so the model believed the remote already had the file. Since 2.4.24: content over 4 MiB is **uploaded in chunks** (with a remote byte-count check) and no longer fails; remaining failures are **reported as an error** whose message states that the local mirror write succeeded and points at `remote_ssh_push`. Set `writeBackFailure: "log"` to restore the old log-only behaviour (since 2.4.25 it is a dropdown in the settings panel) |
+| **`write` / `edit` fails with "the local mirror was written, but it was NOT pushed to the remote"** | That is **guard B (since 2.4.25, on by default; issue #24 second round)**: before pushing, the plugin found that the remote copy **had changed since the last push** (on a shared cluster usually because your own finished job wrote it), so it reports instead of overwriting — pushing would silently discard those changes. Handle it by pulling the remote down first (`remote_ssh_sync`, or `remote_ssh_cat`) and comparing; if the local copy should win, run `remote_ssh_push` to overwrite (a successful push/sync clears the record, so it will not block you forever). To disable the guard entirely use the `writeBackFreshness` setting or `DSH_REMOTE_SSH_WRITEBACK_FRESHNESS=off`. If the log line instead says the remote state could not be determined, that is a connection problem — in that case the plugin **pushes as usual** and only logs (unreadable ≠ changed). With `writeBackFailure: "log"` the tool does not fail, but **the same full report goes to the log** (since 2.4.26) — do not judge by the tool result alone |
+| **Drafts/temporary files written in the session directory are silently published to the remote (shared HPC project dir)** | The write-back bridge mirrors agent `write`/`edit` to the remote (guardrail suggested in issue #24). A workspace can disable it entirely with `writeBack: false`, or exclude paths with `writeBackExclude` — mirror-relative paths supporting `*` / `**` / `?`, with a trailing `/` meaning a directory prefix, e.g. `["_patch/**", "*.log", "scratch/"]`. Both affect **only the write-back**; `remote_ssh_push` can still publish things deliberately |
+| **In a local session, "some files won't open": `cannot read: ENOENT …<profile>\tools\x.py`** | **Fixed in 2.4.27 (issue #25)**. To support remote workspaces the plugin takes over better-sidebar's `/sidebar/file` and `/sidebar/api/fs.*` with `exact` routes — and **exact routes capture local sessions too**: the local branch handed relative paths straight to `fs`, so Node resolved them against the **plugin host's `process.cwd()`** (the pnpm profile directory). Relative paths therefore failed with ENOENT while absolute paths worked, which is why it looked like "some files won't open". Writes were worse: `fs.write` / `fs.remove` with a relative path landed **inside the plugin host directory**. Since 2.4.27 every site (`/sidebar/file`, `fs.read/tree/trees/write/rename/remove/mkdir/search` on both the local and remote branches, `git.*`, `open.external`) resolves against the **session cwd** first (same semantics as upstream `ensureWorkspacePath`), and **fails loudly** when no session cwd is available instead of guessing `process.cwd()` |
+| **In a remote workspace the file tree's "New file" looks successful but the file never reaches the remote; the git panel's blame / worktrees / pull / push return wrong results or `not a git repository`** | **Fixed in 2.4.28**. better-sidebar **0.25.0** added 9 endpoints, 6 of which touch a repository or a path, and the plugin had not registered them. The plugin takes over `/sidebar/api/fs.*` and `git.*` with `exact` routes, so **unregistered endpoints fall back to the upstream implementation** — whose cwd in a remote workspace is the **local mirror directory**: `fs.createFile` therefore created an empty file only in the mirror (never on the remote; the same class as the `fs.trees` bypass in 2.4.18); `git.blame` / `git.diff-head` / `git.worktrees` computed against the mirror's git state (the mirror usually has no `.git`, so empty results or errors); and `git.pull` / `git.push` ran against that unrelated mirror repository. Since 2.4.28 all six are intercepted and run **on the remote**; the model-only endpoints (`git.models` / `git.suggest-message` / `git.commit-model`) touch no repository path and still belong to upstream. Upgrade to **2.4.28** and restart DSH |
+| **In a remote workspace, a file you wrote or deleted never reaches the remote, or you get `400 ENOENT … lstat '<mirror path>'`; sessions started in a **subdirectory** hit this most often** | **Fixed in 2.4.29**. Remote-workspace detection only recognised "the one directory that literally holds `.remote-ssh.json`" (`readRemoteInfoSync` does **not** walk upwards): real clients always send a valid `sessionId` (the session cwd is the mirror root), so this stayed hidden — but it misses when ① the session was started in a **subdirectory** of the workspace, or ② the client sends a **stale/unknown `sessionId`**, in which case detection falls back to the request's `path`. A missed detection makes writes/deletes land **silently on the local mirror**. Since 2.4.29 detection matches by **workspace-root prefix** (which also fixes the mapping bug where a deeper path used as the base produced a remote path with a missing segment; `@` file-reference completion benefits too). In addition, a path **under the mirror directory that belongs to no registered workspace** now **fails loudly** (reads and writes) instead of being treated as a local path. Upgrade to **2.4.29** and restart DSH |
+| A command hangs forever | The 120s timeout discards the pooled session automatically (**a timeout does not kill the remote command**); use `timeoutMs: 0` for long jobs and press stop or call `remote_ssh_kill` at any time — both SIGHUP the remote process group |
+| Saving from the sidebar editor in a remote workspace does nothing (√ / Ctrl+S) | **Fixed in 2.4.45 (issue #37)**: saves used to land in the local mirror only, so the remote file never changed. They now go to the remote over SSH, preserving the file's BOM and line endings; a stale baseline surfaces as `fs-conflict` (the editor offers a reload). Non-UTF-8 files (GBK / UTF-16) are **refused** instead of being silently re-encoded — edit those on the remote or through the model tools |
+| Large files are truncated | 4MB per read, ≈6.29MB on the pooled download path (larger files fall back to a one-shot connection); use `remote_ssh_exec` with `head`/`tail` to page through |
+| **In a remote-workspace session a local absolute path cannot be read, and write/delete land on the remote; or a remote absolute path (`/mnt/...`, `/tmp/x.log`) never opens** | **Fixed in 2.4.30 (issue #26)**. The remote-vs-local decision used to look only at the **session cwd**: a remote-workspace session pushed the whole request into the remote branch. So ① a local absolute path was sent to the remote as `<remoteRoot>/Users/...` — reads reported `No such file`, and **if the remote happened to have that path, a different file was returned silently**, while `fs.write` never reached the local disk and `fs.remove`/`fs.rename` hit the remote; ② a remote absolute path was treated as relative and re-prefixed (`<root><root>/...`). Now every **request path** decides on its own: mirror member → mapped to the remote; drive letter / UNC (including `C:foo`) → **local**, even in a remote session; `/...` remote absolute → **passed through verbatim**; relative → resolved against the session cwd; mixing local with remote/mirror paths in one request → explicit `400`. The silent `localToRemote()` fallback was also raised from `debug` to `warn`. |
+| **"Add workspace" → the "📁 Local directory" tab immediately shows "path is required"; the tree is empty and no local workspace can be added** | **Fixed in 2.4.31 (issue #27)**: a side effect of the `localPathOf()` guard added in 2.4.27 for issue #25. The dialog is *designed* to send an empty path on first open (it means "open the home directory" — see the comment in `lib/client.js`; `localListDir()` has its own `homedir()` fallback), but the empty path was rejected outright. Now only "no session cwd + empty path + the read-only `fs.tree`" is allowed through; **writes, relative paths and every other method still fail exactly as before**. Workaround: type a full local absolute path in the field and press "Open" |
+| **In a remote workspace, "Preview" reports "file not found, it may have been moved or deleted" while right-click download of the same path works** | **Fixed in 2.4.35 (issue #29)**. The built-in preview does not use this plugin's HTTP routes: it goes through the in-process workspace-file RPC → `ctx.fs`, whose root is the **local mirror**, so any file missing from the mirror is always not-found (the other face of #15 "`read` still reads the mirror"). `ctx.fs` reads now have a shadow layer: **read locally when the mirror has it, fall back to the remote only when it does not** (still not-found when the remote lacks it too). Not covered yet: a remote-side edit stays invisible while an older copy exists in the mirror; remote changes do not trigger live refresh |
+| **After upgrading to 2.4.35 every skill disappears (`skill` reports unknown, no skill catalog in the system prompt)** | **Fixed in 2.4.36 (issue #30, a 2.4.35 regression)**. When a path was missing locally, the 2.4.35 read shadow fell back to the remote; for paths **outside every remote mirror** it replaced the original local not-found with a Chinese `FS_IO_ERROR`. `dsh-skill-filesystem` only treats `FS_NOT_FOUND / ENOENT / FS_NOT_DIRECTORY` as "this root does not exist", so listing the project-level skill root (`<cwd>/.dsh/skills`, absent in most projects) threw, and the whole skill catalog was suppressed. Now "the remote has no copy either" always re-throws the original local error (internal `NO_MIRROR` code), matching 2.4.34 semantics; binary / too-large / aborted errors that only occur once the remote really has content still surface. Workaround: downgrade to 2.4.34 |
+| **A local project with the same name as a remote workspace gets the globe marker (🌐)** | **Fixed in 2.4.37 (issue #31)**. The globe is a client-side DOM decoration applied to *workspace rows*, and the old implementation recognised rows **by title text only** — a local project sharing the workspace's name has the same text, so it was decorated too. Rows are now matched by the shell's own key `data-row-key="workspace:<native workspace id>"` (the host stores that id in the workspace record as `shellWorkspaceId`; older records are backfilled from the mirror path). Title matching remains only as a fallback for old shells, and is skipped entirely when more than one row shares that title; rows decorated by mistake before the upgrade get their marker removed automatically |
+
+## How It Works
+
+The plugin registers 6 exact routes (`/sidebar/api/fs.tree`, `fs.read`, `fs.write`, `fs.search`, plus `fs.rename` and `fs.remove` added by better-sidebar 0.19) that intercept better-sidebar's prefix route. When the session cwd contains `.remote-ssh.json`, requests go through SSH; otherwise local fs. The client sees local mirror paths — the Host transparently translates them to remote paths.
+
+**The model-side file tools (the agent's `write`/`edit`) use the in-process `ctx.fs`** (the host base bundle mounts the local `fs-sandbox`), never an HTTP route — so up to 2.4.13 they only landed in the **local mirror**, leaving users unable to find the file on the remote machine without a manual `remote_ssh_push`. Since 2.4.14 the plugin wraps `ctx.fs`'s `writeText`/`editText`: the **original write runs unchanged** (mirror content, sandbox fence and write-intent semantics intact), and on success the same content is pushed to **that one remote file** (not a whole-mirror tar, which could overwrite unrelated remote files), creating the remote parent directory first. A failed push only logs a warning — the local write already succeeded, so the bridge never turns a write into a failure; if the service cannot be wrapped, the old behaviour returns with a log line.
+
+Remote reads use a **single-roundtrip merged read**: one pooled command returns the `size/mtime` frame plus the file content (text extensions prefer raw transfer with byte-length + U+FFFD validation and automatic base64 fallback — results are byte-identical), combined with host-side result caching and change invalidation (see below).
+
+A shell wrapper (`~/.dsh/remote-ssh/dsh-remote-shell[.cmd]`) detects the workspace's `.remote-ssh.json` and auto-launches `ssh -tt`, making the built-in **Terminal** tab transparently connect to remote.
+
+## Caching & Consistency
+
+Remote reads and directory listings are cached host-side (read LRU 32 + listing LRU 64 entries, TTL 5s; entries >1MiB are not cached, total budget 32MB so large files never weigh down the host): re-opening or switching back to a tab within the TTL costs **0 network round-trips**; after expiry a lightweight mtime+size revalidation runs first, and unchanged files are served without re-transfer. Writes, deletes, moves, mkdir, uploads, push (syncUp), successful remote exec and mutating git subcommands automatically invalidate the affected cache entries, with a per-profile cache epoch guarding same-second same-size writes and path-space mismatches.
+
+Known limitations:
+
+- Files changed from the integrated terminal (`ssh -tt`) or by other remote processes rely on TTL + revalidation and may be stale for up to **5 seconds**;
+- **The mirror is a local-first read shadow (since 2.4.35, issue #29)**: `ctx.fs` reads (`stat` / `lstat` / `resolve` / `readText` / `streamText` / `readBytes` / `readByteRange` / `listDir`) now **use the mirror when it has the file and fall back to the remote only when it does not** — which is what makes the built-in preview and the agent's `read` work for files that exist only on the remote. Two gaps remain: ① when someone changes the file remotely while the mirror still holds an older copy, reads return the **mirror** version (local-first; `remote_ssh_sync` refreshes it); ② remote changes do **not** trigger live refresh (`ctx.fs.watch` is a no-op for the remote shadow), so previews do not update by themselves. Whole-file remote reads are also capped at 4 MiB per call;
+- The pooled `/sidebar/file` download path has an effective limit of ≈**6.29MB**; larger files automatically fall back to a one-shot connection download (succeeds, with one extra reconnect);
+- Binary content masquerading with a text extension costs one extra base64 fallback round-trip (results are still correct).
+
+## ❤️ Happy Qixi
+
+This project is a Qixi Festival gift for **zhangyi**.
+
+May it connect us as closely as it connects to distant supercomputers. Happy Qixi ❤️
+
+—— August 18, 2026
+
+## Changelog
+
+Version history and per-release details live in [CHANGELOG.md](./CHANGELOG.md) (latest: 2.4.3 better-sidebar 0.19 endpoints, 2.4.2 settings icon flash, 2.4.0 command-level timeout + `remote_ssh_kill`).
+
+## License
+
+[MIT](./LICENSE)
+
+---
+
+If this plugin helps you, a ⭐ [star on GitHub](https://github.com/ZhangFengshun/dsh-remote-ssh) or a favourite on [DSH Market](https://dshmarket.com) helps more people who work on remote supercomputers find it.
