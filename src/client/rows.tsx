@@ -63,14 +63,13 @@ import {
   IconPinOutlineRegular,
   IconPlanOutlineMedium,
   IconPlusOutlineRegular,
-  IconProjectAddOutlineRegular,
+  IconProjectAddOutlineMedium,
   IconRightUpOutlineRegular,
   IconShieldOutlineMedium,
   IconSkillOutlineMedium,
   IconSlidersTwoOutlineRegular,
   IconSparkleMedium,
   IconTreeCornerMedium,
-  IconTriangleRightFillMedium,
   IconTrashOutlineRegular,
   IconUsersOutlineMedium,
   IconWorkspaceTreeOutlineMedium,
@@ -298,7 +297,7 @@ export function CategoryRow({ node, t, onToggle, onAddWorkspace, addingWorkspace
       onDrop={onRowDrop}
     >
       <span className={`wgChevron${node.expanded ? ' wgChevronOpen' : ''}`}>
-        <IconTriangleRightFillMedium />
+        <span aria-hidden="true" style={{ display: 'block', width: 0, height: 0, borderTop: '4px solid transparent', borderBottom: '4px solid transparent', borderLeft: '5px solid currentColor' }} />
       </span>
       <span className="wgCategoryIcon" data-wg-row-icon="group">
         <CategoryGlyph
@@ -426,12 +425,14 @@ export function WorkspaceRow({ node, t, onToggle, onNewSession, onRename, onDele
       onDrop={onRowDrop}
     >
       <span className={`wgChevron${node.expanded ? ' wgChevronOpen' : ''}`}>
-        <IconTriangleRightFillMedium />
+        <span aria-hidden="true" style={{ display: 'block', width: 0, height: 0, borderTop: '4px solid transparent', borderBottom: '4px solid transparent', borderLeft: '5px solid currentColor' }} />
       </span>
       <span className="wgCategoryIcon" data-wg-row-icon="project">
         {/* Project rows use the project glyph (same as the official workspace
-            browser) so groups (folder glyph) and projects stay distinguishable. */}
-        <IconProjectAddOutlineRegular />
+            browser) so groups (folder glyph) and projects stay distinguishable.
+            Medium stroke like every other row glyph: the thin Regular artwork
+            turns into a grey blob once the sidebar shrinks it. */}
+        <IconProjectAddOutlineMedium size={16} />
       </span>
       <span className="wgProjectLabel" title={node.path}>{node.label}</span>
       {/* Same trailing-slot contract as groups and folders: the count and the
@@ -536,7 +537,7 @@ export function FolderRow({ node, t, onToggle, onNewSession, onSetRoot, onRemove
       onClick={onToggle}
     >
       <span className={`wgChevron${node.expanded ? ' wgChevronOpen' : ''}`}>
-        <IconTriangleRightFillMedium />
+        <span aria-hidden="true" style={{ display: 'block', width: 0, height: 0, borderTop: '4px solid transparent', borderBottom: '4px solid transparent', borderLeft: '5px solid currentColor' }} />
       </span>
       <span className="wgCategoryIcon" data-wg-row-icon="folder">
         {node.expanded ? <IconFolderOpenMedium /> : <IconFolderCloseMedium />}
