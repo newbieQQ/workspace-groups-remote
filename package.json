@@ -1,6 +1,6 @@
 {
   "name": "workspace-groups-remote",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Merged DSH bundle: the workspace-groups sidebar manager (category -> project -> session grouped tree, session tab strip) plus dsh-remote-ssh (VSCode Remote-SSH-like remote development: remote workspaces, file access, integrated terminal) in one installable package.",
   "keywords": [
     "dsh",
