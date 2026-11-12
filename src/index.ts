@@ -53,6 +53,7 @@ import {
   validateRemoteHintPath,
   writeFoldersDocument,
 } from './host-folders.ts'
+import { buildFarm, removeFarm } from './host-farm.ts'
 
 /** Plugin identity for cordis.yml rows. */
 export const name = 'workspace-groups-local'
@@ -381,4 +382,70 @@ export function apply(ctx: GroupsContext): void {
       res.end(body)
     },
   }), '@dsh-xhl/workspace-groups: /workspace-groups/folders route')
+
+  ctx.effect(() => ctx.webServer.register({
+    kind: 'exact',
+    path: '/workspace-groups/farm',
+    handler: async (req, res) => {
+      if (req.method === 'POST') {
+        let raw: unknown
+        try {
+          raw = JSON.parse(await readBody(req, MAX_MANUAL_BODY_BYTES))
+        } catch (error) {
+          const status = error instanceof HttpError ? error.status : 400
+          writeError(res, status, `workspace-groups: ${error instanceof Error ? error.message : String(error)}`)
+          return
+        }
+        const body = raw as { name?: unknown; folders?: unknown } | null
+        if (body === null || typeof body !== 'object' || !Array.isArray(body.folders)) {
+          writeError(res, 400, 'workspace-groups: farm needs { name, folders: string[] }')
+          return
+        }
+        let result
+        try {
+          // Nothing is copied: every entry is a link to a folder the user owns.
+          result = await buildFarm({
+            name: typeof body.name === 'string' ? body.name : 'farm',
+            folders: body.folders,
+          })
+        } catch (error) {
+          writeError(res, 400, `workspace-groups: ${error instanceof Error ? error.message : String(error)}`)
+          return
+        }
+        const payload = JSON.stringify(result)
+        res.writeHead(200, {
+          'Content-Type': 'application/json; charset=utf-8',
+          'Cache-Control': 'no-store',
+          'Content-Length': Buffer.byteLength(payload),
+        })
+        res.end(payload)
+        return
+      }
+      if (req.method === 'DELETE') {
+        const url = new URL(req.url ?? '/', 'http://localhost')
+        const target = url.searchParams.get('path')
+        if (target === null || target.trim() === '') {
+          writeError(res, 400, 'workspace-groups: farm needs ?path=')
+          return
+        }
+        try {
+          // Unlinks entries only; a real directory inside aborts the removal
+          // instead of being deleted with everything under it.
+          await removeFarm(target)
+        } catch (error) {
+          writeError(res, 400, `workspace-groups: ${error instanceof Error ? error.message : String(error)}`)
+          return
+        }
+        const payload = JSON.stringify({ ok: true })
+        res.writeHead(200, {
+          'Content-Type': 'application/json; charset=utf-8',
+          'Cache-Control': 'no-store',
+          'Content-Length': Buffer.byteLength(payload),
+        })
+        res.end(payload)
+        return
+      }
+      writeError(res, 405, 'method not allowed')
+    },
+  }), '@dsh-xhl/workspace-groups: /workspace-groups/farm route')
 }
