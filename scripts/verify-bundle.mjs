@@ -8,7 +8,7 @@
 //  4. cordis.patch.yml carries the single insert row plus remote-ssh's two
 //     shell overrides (better-sidebar / terminal-controller).
 import { readFileSync } from 'node:fs'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import { dirname, join } from 'node:path'
 import vm from 'node:vm'
 import { checkVendorManifest } from './vendor-manifest.mjs'
@@ -18,7 +18,7 @@ const pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'))
 let failures = 0
 const check = (label, ok) => { console.log(`${ok ? '✓' : '✗ FAIL'} ${label}`); if (!ok) failures++ }
 
-const host = await import(join(root, 'lib/index.js'))
+const host = await import(pathToFileURL(join(root, 'lib/index.js')).href)
 check('host name is the package name', host.name === pkg.name)
 check('host exports the remote-ssh Config at top level (owns the settings entry)', !!host.Config)
 check('host inject is the union', JSON.stringify(host.inject) === JSON.stringify(['webServer', 'subprocess', 'tools', 'workspaceRegistry']))
@@ -42,7 +42,7 @@ check('client contains the remote-ssh half', client.includes('remssh'))
 
 const remoteHost = readFileSync(join(root, 'lib/remote-ssh/index.js'), 'utf8')
 const vendorHost = readFileSync(join(root, 'vendor/dsh-remote-ssh/lib/index.js'), 'utf8')
-check('remote-ssh host artifact carries the canonical-path patch', remoteHost.includes('resolveRemoteCanonical') && remoteHost.includes('lightRemotePath(w.remotePath) === lightRemotePath(a.remotePath)'))
+check('remote-ssh host artifact carries the canonical-path patch', remoteHost.includes('resolveRemoteCanonical') && remoteHost.includes('targetResolved.ok') && remoteHost.includes('无法确认远端路径是否重复'))
 check('vendored upstream host stays pristine', !vendorHost.includes('resolveRemoteCanonical'))
 check('remote-ssh host artifact carries the ssh hardening patches', remoteHost.includes('head.concat(opts, ["--", target])') && remoteHost.includes('"sshpass", "-e"') && remoteHost.includes('inMirrorRoot'))
 check('remote-ssh host artifact has no vulnerable code forms', !remoteHost.includes('["sshpass", "-p"') && !remoteHost.includes("'StrictHostKeyChecking=no', '-o', 'ExitOnForwardFailure=no'"))

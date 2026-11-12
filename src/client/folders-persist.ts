@@ -33,6 +33,17 @@ export interface FoldersSnapshot {
   readonly remoteBase?: string
 }
 
+/**
+ * One folder-overlay read result. A failed read must never masquerade as the
+ * empty document: the browser uses `ok` to keep the last confirmed rows and
+ * show a retryable error instead of rendering every member as a duplicate.
+ */
+export interface FoldersLoadResult extends FoldersSnapshot {
+  readonly ok: boolean
+  /** Human-readable failure reason; absent on success. */
+  readonly error?: string
+}
+
 /** One non-empty string field, or undefined when it is absent or blank. */
 function wireText(value: unknown): string | undefined {
   if (typeof value !== 'string') return undefined
@@ -107,29 +118,51 @@ function parseWireEntry(value: unknown): WorkspaceFolderEntry | null {
 
 /**
  * Fetch the stored folder overlay.
+ *
+ * A non-2xx response, a malformed body or a transport error is returned as
+ * `ok:false` with the reason. The empty document is still present for callers
+ * that only need a safe value, but `ok` is the authority: the browser must not
+ * treat a failed read as "no folders".
  * @param fetchImpl - fetch implementation (injectable for tests).
- * @returns the overlay plus the reported mirror base; the empty document on any
- * failure.
+ * @param signal - optional cancellation for a superseded read/retry.
  */
-export async function loadFolders(fetchImpl: typeof fetch = fetch): Promise<FoldersSnapshot> {
+export async function loadFolders(
+  fetchImpl: typeof fetch = fetch,
+  signal?: AbortSignal,
+): Promise<FoldersLoadResult> {
   try {
     const response = await fetchImpl(FOLDERS_ROUTE, {
       method: 'GET',
       // Folders are user state; a cached response would show stale rows.
       cache: 'no-store',
+      ...(signal === undefined ? {} : { signal }),
     })
-    if (!response.ok) return { document: EMPTY_FOLDERS_DOCUMENT }
+    if (!response.ok) {
+      return { ok: false, document: EMPTY_FOLDERS_DOCUMENT, error: `HTTP ${response.status}` }
+    }
     const body: unknown = await response.json()
-    if (typeof body !== 'object' || body === null) return { document: EMPTY_FOLDERS_DOCUMENT }
+    if (typeof body !== 'object' || body === null) {
+      return { ok: false, document: EMPTY_FOLDERS_DOCUMENT, error: '响应不是 JSON 对象' }
+    }
     const source = body as Record<string, unknown>
     const remoteBase = typeof source.remoteBase === 'string' && source.remoteBase.trim() !== ''
       ? source.remoteBase.trim()
       : undefined
     const base = remoteBase === undefined ? {} : { remoteBase }
     const document = parseWireDocument(source)
-    return { document: document ?? EMPTY_FOLDERS_DOCUMENT, ...base }
-  } catch {
-    return { document: EMPTY_FOLDERS_DOCUMENT }
+    if (document === null) {
+      return { ok: false, document: EMPTY_FOLDERS_DOCUMENT, ...base, error: '文件夹文档格式无效' }
+    }
+    return { ok: true, document, ...base }
+  } catch (error) {
+    if (signal?.aborted === true) {
+      return { ok: false, document: EMPTY_FOLDERS_DOCUMENT, error: 'aborted' }
+    }
+    return {
+      ok: false,
+      document: EMPTY_FOLDERS_DOCUMENT,
+      error: error instanceof Error ? error.message : String(error),
+    }
   }
 }
 
@@ -162,10 +195,13 @@ export function parseWireDocument(source: Record<string, unknown>): FoldersDocum
  */
 export class FoldersConflictError extends Error {
   readonly current: FoldersDocument
-  constructor(current: FoldersDocument) {
+  /** The unsaved document the failed PUT attempted to write. */
+  readonly attempted: FoldersDocument
+  constructor(current: FoldersDocument, attempted: FoldersDocument = current) {
     super('folder overlay changed in another window')
     this.name = 'FoldersConflictError'
     this.current = current
+    this.attempted = attempted
   }
 }
 
@@ -196,7 +232,7 @@ export async function saveFolders(
     const current = typeof body === 'object' && body !== null
       ? parseWireDocument(body as Record<string, unknown>)
       : null
-    throw new FoldersConflictError(current ?? EMPTY_FOLDERS_DOCUMENT)
+    throw new FoldersConflictError(current ?? EMPTY_FOLDERS_DOCUMENT, document)
   }
   if (!response.ok) throw new Error(`PUT ${FOLDERS_ROUTE}: ${response.status}`)
   // Adopt the host's echo: it is the normalized document (with the bumped

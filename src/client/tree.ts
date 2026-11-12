@@ -364,12 +364,18 @@ function memberFolderLabels(entry: WorkspaceFolderEntry | undefined): Map<string
 function applyFolders(
   workspaceId: WorkspaceId,
   workspacePath: string,
+  workspaceTitle: string,
   sessions: readonly SessionNode[],
   list: SessionListState,
   entry: WorkspaceFolderEntry | undefined,
   collapsedFolders: ReadonlySet<string> | undefined,
 ): { sessions: readonly SessionNode[]; folders?: readonly FolderNode[] } {
   const labels = memberFolderLabels(entry)
+  // The base row shows the project's confirmed display title (custom name or
+  // remote directory name) instead of the local mirror basename. The path
+  // remains the directory identity for file access; only the LABEL changes.
+  const title = workspaceTitle.trim()
+  if (title !== '') labels.set(workspacePath, title)
   const extras = effectiveFolders(workspacePath, entry).slice(1)
   if (extras.length === 0) return { sessions }
   const root = rootOf(workspacePath, entry)
@@ -492,6 +498,7 @@ export function deriveGroups(
       const partitioned = applyFolders(
         workspace.workspaceId,
         workspace.path,
+        workspace.title,
         sessions,
         list,
         entryFor(folders, workspace.workspaceId as string),
@@ -568,6 +575,7 @@ export function deriveTopLevel(
     const partitioned = applyFolders(
       workspace.workspaceId,
       workspace.path,
+      workspace.title,
       sessions,
       list,
       entryFor(folders, workspaceId),
@@ -627,6 +635,7 @@ export function deriveDefaultWorkspace(
   const partitioned = applyFolders(
     workspace.workspaceId,
     workspace.path,
+    workspace.title,
     sessions,
     list,
     entryFor(folders, workspace.workspaceId as string),
@@ -819,6 +828,7 @@ export function deriveSearchGroups(
     const partitioned = applyFolders(
       workspace.workspaceId,
       workspace.path,
+      workspace.title,
       nodes,
       list,
       entryFor(folders, workspace.workspaceId as string),

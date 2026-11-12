@@ -14,6 +14,7 @@ import type { SessionListState, SessionSummary } from '@deepseek-ai/dsh-api-sess
 import type { WorkspaceView } from '@deepseek-ai/dsh-api-workspace-controller/client'
 import { deriveGroups, deriveSearchGroups, deriveTopLevel } from '../src/client/tree.ts'
 import type { GroupsConfig, ManualGroups } from '../src/core/types.ts'
+import type { FoldersDocument } from '../src/core/folders.ts'
 
 const CONFIG: GroupsConfig = {
   categories: [
@@ -176,6 +177,39 @@ describe('category appearance on the tree nodes', () => {
     }
     const tree = deriveSearchGroups(listState(ws), ws, CONFIG, new Set([session('s1', 'x').id]), [], manual)
     expect(tree.categories[0]?.appearance).toEqual({ color: 'red' })
+  })
+})
+
+describe('folder rows use confirmed display names', () => {
+  it('base row shows the project title, not the local mirror basename', () => {
+    const ws = workspace('ws-remote', 'C:/mirror/w123', '远程项目', ['s1'])
+    const folders: FoldersDocument = {
+      version: 1,
+      revision: 1,
+      workspaces: {
+        'ws-remote': {
+          folders: ['C:/mirror/w123/extra'],
+          members: [{
+            path: 'C:/mirror/w123/extra',
+            workspaceId: 'ws-extra',
+            kind: 'remote',
+            remotePath: '/srv/proj/extra',
+            profileId: 'prof-1',
+            title: 'extra-remote',
+          }],
+        },
+      },
+    }
+    const view = { expandedCategories: [], expandedWorkspaces: ['ws-remote'] }
+    const top = deriveTopLevel(listState([ws], 's1'), [ws], [], CONFIG, view, { categories: [], assignments: {} }, new Map(), folders)
+    const node = top.find(item => item.workspaceId === 'ws-remote')
+    expect(node).toBeDefined()
+    const base = node?.folders?.find(folder => folder.isBase)
+    const member = node?.folders?.find(folder => !folder.isBase)
+    expect(base?.label).toBe('远程项目')
+    expect(member?.label).toBe('extra-remote')
+    // The underlying path identity is untouched.
+    expect(base?.path).toBe('C:/mirror/w123')
   })
 })
 

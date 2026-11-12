@@ -358,10 +358,18 @@ export function GroupsBrowser({
   // ---- Per-workspace folders (multi-root) -------------------------------------
   //
   // A second host sidecar (`/workspace-groups/folders`) lists each workspace's
-  // extra folders plus the optional root folder. It is read once per mount and
-  // written back whole, like the manual overlay above; a failed write is a
-  // toast rather than a banner because every edit here is a one-off row action.
+  // extra folders plus the optional root folder. Reads carry an explicit
+  // loading/ready/error phase: an HTTP failure must never be rendered as "no
+  // folders", because that makes every member reappear as a duplicate row.
   const [foldersDoc, setFoldersDoc] = useState<FoldersDocument>(EMPTY_FOLDERS_DOCUMENT)
+  const [foldersPhase, setFoldersPhase] = useState<'loading' | 'ready' | 'error'>('loading')
+  const [foldersError, setFoldersError] = useState<string | null>(null)
+  const [foldersRetryToken, setFoldersRetryToken] = useState(0)
+  const [foldersConflict, setFoldersConflict] = useState<{ current: FoldersDocument; draft: FoldersDocument } | null>(null)
+  const foldersConfirmedRef = useRef<FoldersDocument>(EMPTY_FOLDERS_DOCUMENT)
+  const foldersHasDataRef = useRef(false)
+  const foldersPendingRef = useRef<FoldersDocument | null>(null)
+  const foldersSavingRef = useRef(false)
   // Folder collapse is component state, not store state: it is a transient view
   // of the row list, like the quick panel, so it is deliberately NOT persisted
   // with the category/workspace expansion keys. Folders start expanded, so
@@ -378,13 +386,53 @@ export function GroupsBrowser({
   const [foldersRemoteBase, setFoldersRemoteBase] = useState<string | null>(null)
   useEffect(() => {
     let cancelled = false
-    void loadFolders().then((snapshot) => {
+    const controller = new AbortController()
+    let timer: ReturnType<typeof setTimeout> | null = null
+    let retries = 0
+    const attempt = async (): Promise<void> => {
+      const snapshot = await loadFolders(fetch, controller.signal)
       if (cancelled) return
-      setFoldersDoc(snapshot.document)
-      setFoldersRemoteBase(snapshot.remoteBase ?? null)
-    })
-    return () => { cancelled = true }
-  }, [])
+      if (snapshot.error === 'aborted') return
+      if (snapshot.ok) {
+        foldersConfirmedRef.current = snapshot.document
+        foldersHasDataRef.current = true
+        setFoldersDoc(snapshot.document)
+        setFoldersRemoteBase(snapshot.remoteBase ?? null)
+        setFoldersPhase('ready')
+        setFoldersError(null)
+        return
+      }
+      const reason = snapshot.error ?? 'unknown error'
+      if (foldersHasDataRef.current) {
+        // Keep the last confirmed rows and mark the refresh as failed; never
+        // replace them with an empty document.
+        setFoldersPhase('ready')
+        setFoldersError(reason)
+      } else {
+        setFoldersPhase('error')
+        setFoldersError(reason)
+      }
+      // Bounded exponential backoff (1s, 2s, 4s, 8s, 15s). The timer is
+      // cancelled on unmount; an online event or the Retry button resets it.
+      if (retries < 5) {
+        const delay = Math.min(15_000, 1_000 * 2 ** retries)
+        retries += 1
+        timer = setTimeout(() => { void attempt() }, delay)
+      }
+    }
+    void attempt()
+    const onOnline = (): void => {
+      retries = 0
+      void attempt()
+    }
+    window.addEventListener('online', onOnline)
+    return () => {
+      cancelled = true
+      controller.abort()
+      if (timer !== null) clearTimeout(timer)
+      window.removeEventListener('online', onOnline)
+    }
+  }, [foldersRetryToken])
 
   const workspaces = useWorkspaces(state => state.items)
   const workspacePhase = useWorkspaces(state => state.phase)
@@ -775,22 +823,68 @@ export function GroupsBrowser({
     setFolderError({ id: Date.now(), text })
   }
 
-  const persistFolders = (next: FoldersDocument): void => {
-    setFoldersDoc(next)
-    saveFolders(next).then((stored) => {
-      setFoldersDoc(stored)
-    }).catch((reason: unknown) => {
-      if (reason instanceof FoldersConflictError) {
-        // Another window wrote first: adopt the host's current document so
-        // the tree shows what is actually stored, and say the edit did not
-        // land instead of leaving a phantom row behind.
-        setFoldersDoc(reason.current)
-        notifyFolder(t('folder.conflict'))
-        return
+  /**
+   * Serialize folder saves. A save always sends the LAST confirmed revision and
+   * the latest pending document; a newer edit made while a request is in flight
+   * is coalesced and sent only after the previous result settles. This keeps an
+   * older response from ever overwriting a newer state.
+   */
+  const drainFolders = async (): Promise<void> => {
+    if (foldersSavingRef.current) return
+    foldersSavingRef.current = true
+    try {
+      while (foldersPendingRef.current !== null) {
+        const draft = foldersPendingRef.current
+        foldersPendingRef.current = null
+        const payload: FoldersDocument = {
+          ...draft,
+          revision: foldersConfirmedRef.current.revision ?? 0,
+        }
+        try {
+          const stored = await saveFolders(payload)
+          foldersConfirmedRef.current = stored
+          setFoldersError(null)
+          if (foldersPendingRef.current === null) setFoldersDoc(stored)
+        } catch (reason) {
+          if (reason instanceof FoldersConflictError) {
+            // Keep the server state visible AND remember the user's unsaved
+            // draft; never silently overwrite the draft or claim success.
+            foldersConfirmedRef.current = reason.current
+            setFoldersDoc(reason.current)
+            setFoldersConflict({ current: reason.current, draft: reason.attempted ?? draft })
+            notifyFolder(t('folder.conflict'))
+          } else {
+            const detail = reason instanceof Error ? reason.message : String(reason)
+            setFoldersDoc(foldersConfirmedRef.current)
+            notifyFolder(`${t('folder.saveError')}: ${detail}`)
+          }
+          // A failed base makes every queued follow-up stale; stop here and let
+          // the user retry the draft explicitly.
+          foldersPendingRef.current = null
+          break
+        }
       }
-      const detail = reason instanceof Error ? reason.message : String(reason)
-      notifyFolder(`${t('folder.saveError')}: ${detail}`)
-    })
+    } finally {
+      foldersSavingRef.current = false
+      if (foldersPendingRef.current !== null) void drainFolders()
+    }
+  }
+
+  const persistFolders = (next: FoldersDocument): void => {
+    if (foldersPhase !== 'ready') {
+      notifyFolder(t('folder.notReady'))
+      return
+    }
+    foldersPendingRef.current = next
+    setFoldersDoc(next)
+    void drainFolders()
+  }
+
+  const retryFolderConflict = (): void => {
+    if (foldersConflict === null) return
+    const draft = foldersConflict.draft
+    setFoldersConflict(null)
+    persistFolders({ ...draft, revision: foldersConflict.current.revision ?? 0 })
   }
 
   /**
@@ -1802,13 +1896,47 @@ export function GroupsBrowser({
       )}
 
       <div className="wgTreeBody">
+        {foldersPhase === 'loading' && (
+          <div className="wgSearchStatus" role="status">{t('folder.loadingState')}</div>
+        )}
+        {foldersPhase === 'error' && (
+          <div className="wgSearchStatus wgManualError" role="alert">
+            {t('folder.loadError')}：{foldersError}
+            {' '}
+            <button type="button" className="wgSmallAction" onClick={() => { setFoldersRetryToken(value => value + 1) }}>
+              {t('folder.retry')}
+            </button>
+          </div>
+        )}
+        {foldersPhase === 'ready' && foldersError !== null && (
+          <div className="wgSearchStatus" role="status">
+            {t('folder.refreshError')}：{foldersError}
+            {' '}
+            <button type="button" className="wgSmallAction" onClick={() => { setFoldersRetryToken(value => value + 1) }}>
+              {t('folder.retry')}
+            </button>
+          </div>
+        )}
+        {foldersConflict !== null && (
+          <div className="wgSearchStatus wgManualError" role="alert">
+            <div>{t('folder.conflictDetail')}</div>
+            <div style={{ marginTop: '4px', fontSize: '10.5px' }}>
+              server revision {foldersConflict.current.revision ?? 0} · draft revision {foldersConflict.draft.revision ?? 0}
+            </div>
+            <div style={{ marginTop: '4px' }}>
+              <button type="button" className="wgSmallAction" onClick={retryFolderConflict}>{t('folder.retryDraft')}</button>
+              {' '}
+              <button type="button" className="wgSmallAction" onClick={() => { setFoldersConflict(null) }}>{t('folder.discardDraft')}</button>
+            </div>
+          </div>
+        )}
         {configError !== null && (
           <div className="wgSearchStatus" role="status">{t('configUnavailable')}</div>
         )}
         {manualError !== null && (
           <div className="wgSearchStatus wgManualError" role="alert">{t('manual.saveError')}: {manualError}</div>
         )}
-        {wide && normalizedQuery !== '' && searchTreeForBody !== undefined && searchMatches !== undefined ? (
+        {foldersPhase !== 'ready' ? null : wide && normalizedQuery !== '' && searchTreeForBody !== undefined && searchMatches !== undefined ? (
           <SearchBody
             tree={searchTreeForBody}
             matches={searchMatches}

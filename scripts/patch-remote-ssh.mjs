@@ -69,17 +69,20 @@ function expandRemoteHome(path, home) {
 }
 
 /**
- * Resolve a remote path to its canonical absolute form via one SSH round
- * trip (also learns the remote $HOME). Returns { canonical, home }; on any
- * failure canonical falls back to the home-expanded light form and the
- * caller proceeds exactly as upstream would (fail-open).
+ * Resolve a remote path to its canonical absolute identity through one SSH
+ * round trip (also learns the remote $HOME). Returns a discriminated result:
+ * ok:false is NOT "not a duplicate" — the caller must refuse to create
+ * because it cannot prove the path is distinct.
  */
 async function resolveRemoteCanonical(subprocess, p, rawPath) {
   const light = lightRemotePath(rawPath);
+  if (!light) return { ok: false, error: "remotePath 为空", home: "" };
   try {
     const cmd = "printf '__DSH_HOME__%s\\n' \\"$HOME\\"; cd " + shellQuotePath(light) + " 2>/dev/null && pwd -P";
     const r = await runRemote(subprocess, p, cmd, undefined, 64 * 1024, undefined, 15000);
-    if (!r || !r.ok || !r.stdout) return { canonical: light, home: "" };
+    if (!r || !r.ok) {
+      return { ok: false, error: String((r && (r.error || r.stderr)) || "SSH 解析失败").trim() || "SSH 解析失败", home: "" };
+    }
     let home = "";
     let resolved = "";
     const lines = String(r.stdout).split("\\n");
@@ -88,10 +91,14 @@ async function resolveRemoteCanonical(subprocess, p, rawPath) {
       if (t.startsWith("__DSH_HOME__")) home = t.slice("__DSH_HOME__".length).trim();
       else if (t.startsWith("/")) resolved = t;
     }
-    if (!resolved) return { canonical: expandRemoteHome(light, home), home: home };
-    return { canonical: lightRemotePath(resolved), home: home };
+    if (!resolved) {
+      // cd failed (missing directory / permission / shell error): identity is
+      // unknown, never silently treated as a new directory.
+      return { ok: false, error: "无法解析远端目录（不存在或不可访问）：" + light, home: home };
+    }
+    return { ok: true, canonical: lightRemotePath(resolved), home: home };
   } catch (e) {
-    return { canonical: light, home: "" };
+    return { ok: false, error: String(e && e.message ? e.message : e), home: "" };
   }
 }
 
@@ -143,20 +150,39 @@ if (typeof runRemote !== 'function' || typeof shellQuotePath !== 'function') {
 
 const FIND_ANCHOR = '      const existing = prefsNow.workspaces.find((w) => w && w.profileId === a.profileId && String(w.remotePath) === String(a.remotePath));'
 
-const FIND_REPLACEMENT = `      // [workspace-groups-remote patch] Canonical-path reuse: compare
-      // light-normalized spellings first; on a miss, resolve once over SSH
-      // (fail-open) and compare canonical forms, so ~/x, x/ and the absolute
-      // form of one directory all reuse the existing record instead of
-      // registering a duplicate workspace + mirror. The stored spelling
-      // converges to the matched/canonical form below.
-      let existing = prefsNow.workspaces.find((w) => w && w.profileId === a.profileId && lightRemotePath(w.remotePath) === lightRemotePath(a.remotePath));
-      if (existing) {
-        a.remotePath = lightRemotePath(a.remotePath);
-      } else {
-        const resolvedCanonical = await resolveRemoteCanonical(subprocess, p, a.remotePath);
-        a.remotePath = resolvedCanonical.canonical;
-        existing = prefsNow.workspaces.find((w) => w && w.profileId === a.profileId && expandRemoteHome(lightRemotePath(w.remotePath), resolvedCanonical.home) === resolvedCanonical.canonical);
-      }`
+const FIND_REPLACEMENT = `      // [workspace-groups-remote patch] Canonical-path reuse: resolve the new
+      // spelling once over SSH and resolve every existing record of the same
+      // connection with the same rule (light form + remote $HOME + pwd -P),
+      // so relative/~, trailing-slash and symlink spellings converge on one
+      // directory identity. A resolution failure is NOT "not a duplicate":
+      // creation is refused with an actionable error instead of silently
+      // registering a second workspace.
+      const targetResolved = await resolveRemoteCanonical(subprocess, p, a.remotePath);
+      if (targetResolved.ok !== true) {
+        return { ok: false, error: "无法确认远端路径是否重复：" + targetResolved.error + "；未创建新工作区" };
+      }
+      const sameProfile = prefsNow.workspaces.filter((w) => w && w.profileId === a.profileId && typeof w.remotePath === "string");
+      let existing = undefined;
+      for (const record of sameProfile) {
+        const light = lightRemotePath(record.remotePath);
+        // Fast path: the spelling expands to exactly the resolved target.
+        if (expandRemoteHome(light, targetResolved.home) === targetResolved.canonical) {
+          existing = record;
+          break;
+        }
+        // Slow path: resolve the old record with the SAME rules. This catches
+        // relative paths, symlinks and historical spellings the old partial
+        // expansion missed. A failure aborts instead of assuming uniqueness.
+        const candidate = await resolveRemoteCanonical(subprocess, p, record.remotePath);
+        if (candidate.ok !== true) {
+          return { ok: false, error: "无法确认是否与已有远程工作区「" + String(record.title || record.id) + "」重复：" + candidate.error + "；未创建新工作区" };
+        }
+        if (candidate.canonical === targetResolved.canonical) {
+          existing = record;
+          break;
+        }
+      }
+      a.remotePath = existing ? String(existing.remotePath) : targetResolved.canonical;`
 
 // Each entry: [label, anchor, replacement]. Anchors are exact byte strings
 // from the vendored file; every one must occur exactly once.
@@ -324,6 +350,13 @@ const TRANSFORMS = [
     "        // name can no longer break out. (~ still expands remotely.)",
     "        const b64 = (s) => Buffer.from(String(s), 'utf8').toString('base64');",
     "        const expanded = remotePath === '~' ? '$HOME' : (remotePath.indexOf('~/') === 0 ? '$HOME/$(printf %s \\\\'' + b64(remotePath.slice(2)) + '\\\\' | base64 -d)' : '$(printf %s \\\\'' + b64(remotePath) + '\\\\' | base64 -d)');",`],
+  ['patch 12: reusing a record keeps its existing title',
+    '      const lastSeg = String(a.remotePath).replace(/\\/+$/, "").split("/").pop();\n      const title = a.title || (lastSeg && lastSeg !== "~" ? lastSeg : (p.name + ":" + a.remotePath));',
+    `      // [workspace-groups-remote patch] Reuse keeps the user's existing
+      // title; only a new record (or an explicit a.title) derives one from
+      // the path. Otherwise "reuse" could silently rename a custom workspace.
+      const lastSeg = String(a.remotePath).replace(/\\/+$/, "").split("/").pop();
+      const title = a.title || (existing && existing.title) || (lastSeg && lastSeg !== "~" ? lastSeg : (p.name + ":" + a.remotePath));`],
 ]
 
 function countOccurrences(text, needle) {
@@ -351,11 +384,11 @@ function applyPatch(source) {
   // Post-conditions: the vulnerable code forms must be gone, the fixed
   // forms present. (A historical comment mentioning StrictHostKeyChecking=no
   // remains in the source; only the executable code form is asserted here.)
-  const gone = ['head.concat(opts, [target])', '["sshpass", "-p"', "'StrictHostKeyChecking=no', '-o', 'ExitOnForwardFailure=no'"]
+  const gone = ['head.concat(opts, [target])', '["sshpass", "-p"', "'StrictHostKeyChecking=no', '-o', 'ExitOnForwardFailure=no'", 'lightRemotePath(w.remotePath) === lightRemotePath(a.remotePath)']
   for (const bad of gone) {
     if (out.includes(bad)) throw new Error('patch-remote-ssh: vulnerable form still present after patching: ' + bad)
   }
-  const present = ['resolveRemoteCanonical', 'head.concat(opts, ["--", target])', '"sshpass", "-e"', 'StrictHostKeyChecking=accept-new', 'inMirrorRoot', 'base64 -d', 'foldedParts', '写回护栏无法确认，本次不推送', 'upstream internals changed (runRemote / shellQuotePath not found)', 'findEscapingLink', 'renameSync(tmpFile, file)', "%s %Y %N", 'startsWith(prev + ".")', 'foldCase', 'dirname(dir) === join(homedir()']
+  const present = ['resolveRemoteCanonical', 'targetResolved.ok', '无法确认远端路径是否重复', 'existing && existing.title', 'head.concat(opts, ["--", target])', '"sshpass", "-e"', 'StrictHostKeyChecking=accept-new', 'inMirrorRoot', 'base64 -d', 'foldedParts', '写回护栏无法确认，本次不推送', 'upstream internals changed (runRemote / shellQuotePath not found)', 'findEscapingLink', 'renameSync(tmpFile, file)', "%s %Y %N", 'startsWith(prev + ".")', 'foldCase', 'dirname(dir) === join(homedir()']
   for (const good of present) {
     if (!out.includes(good)) throw new Error('patch-remote-ssh: expected patched form missing: ' + good)
   }

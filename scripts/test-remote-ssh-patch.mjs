@@ -85,6 +85,7 @@ const lightRemotePath = new Function(grabFunction('lightRemotePath') + '\nreturn
 const expandRemoteHome = new Function(grabFunction('expandRemoteHome') + '\nreturn expandRemoteHome;')()
 
 const HOME = '/home/u'
+const SYMLINKS = { '/home/u/link': '/srv/real' }
 let sshCalls = 0
 let sshFails = false
 function fakeRunRemote(subprocess, p, cmd) {
@@ -95,7 +96,8 @@ function fakeRunRemote(subprocess, p, cmd) {
   let target = m ? m[1].trim() : ''
   if (target.startsWith('~/')) target = target.slice(2).replace(/^'(.*)'$/, '$1')
   else target = target.replace(/^'(.*)'$/, '$1')
-  const resolved = (target.startsWith('/') ? target : HOME + '/' + target).replace(/\/+$/, '')
+  const absolute = (target.startsWith('/') ? target : HOME + '/' + target).replace(/\/+$/, '')
+  const resolved = SYMLINKS[absolute] || absolute
   return Promise.resolve({ ok: true, stdout: '__DSH_HOME__' + HOME + '\n' + resolved + '\n' })
 }
 const resolveRemoteCanonical = new Function('shellQuotePath', 'runRemote', 'lightRemotePath', 'expandRemoteHome',
@@ -113,10 +115,10 @@ check(expandRemoteHome('~/proj', '') === '~/proj', 'expand: no home, untouched')
 console.log('resolveRemoteCanonical')
 {
   const r = await resolveRemoteCanonical({}, {}, '~/proj/')
-  check(r.canonical === '/home/u/proj' && r.home === HOME, 'resolves ~/proj/ to the absolute canonical path')
+  check(r.ok === true && r.canonical === '/home/u/proj' && r.home === HOME, 'resolves ~/proj/ to the absolute canonical path')
   sshFails = true
   const f = await resolveRemoteCanonical({}, {}, '~/proj')
-  check(f.canonical === '~/proj' && f.home === '', 'SSH failure is fail-open (light form, no home)')
+  check(f.ok === false && /stubbed failure/.test(f.error), 'SSH failure is fail-closed (no canonical fallback)')
   sshFails = false
 }
 
@@ -184,18 +186,37 @@ console.log('createRemoteWorkspace (patched)')
   check(r.ok === true && r.reused === true && state.workspaces.length === 1, 'E: trailing-slash variant reuses')
 }
 {
+  const { face, state } = fakeSettings([{ ...seedRecord, remotePath: 'proj' }])
+  const handler = makeHandler(face)
+  const r = await handler({ profileId: 'prof-1', remotePath: '~/proj/' })
+  check(r.ok === true && r.reused === true && state.workspaces.length === 1, 'H: relative record spelling resolves to the same directory')
+}
+{
+  const { face, state } = fakeSettings([{ ...seedRecord, remotePath: '/home/u/link' }])
+  const handler = makeHandler(face)
+  const r = await handler({ profileId: 'prof-1', remotePath: '/srv/real' })
+  check(r.ok === true && r.reused === true && state.workspaces.length === 1, 'I: symlink and pwd -P form count as one directory')
+}
+{
+  const { face, state } = fakeSettings([{ ...seedRecord, profileId: 'prof-2' }])
+  const handler = makeHandler(face)
+  const r = await handler({ profileId: 'prof-1', remotePath: '/home/u/proj' })
+  check(r.ok === true && r.reused === false && state.workspaces.length === 2, 'J: same path on another connection is not merged')
+}
+{
   const { face, state } = fakeSettings([seedRecord])
   const handler = makeHandler(face)
   sshFails = true
   const r = await handler({ profileId: 'prof-1', remotePath: '/home/u/proj' })
   sshFails = false
-  check(r.ok === true && state.workspaces.length === 2, 'D: with SSH down the create still succeeds (fail-open, upstream behavior)')
+  check(r.ok === false && /无法确认远端路径是否重复/.test(String(r.error)), 'D: SSH down refuses creation instead of silently duplicating')
+  check(state.workspaces.length === 1, 'D: no second record is written when identity cannot be confirmed')
 }
 
 
 // --- sshArgv hardening (patch 2) -------------------------------------------
 const sshArgv = new Function('sshExecutablePath', 'expandSshPath', 'ensureWindowsAskpass',
-  grabFunction('sshArgv') + '\nreturn sshArgv;')(() => 'ssh', (x) => x, () => { throw new Error('win32 only') })
+  grabFunction('sshArgv') + '\nreturn sshArgv;')(() => 'ssh', (x) => x, () => ({ ascii: true, file: 'C:/tmp/askpass.cmd' }))
 
 console.log('sshArgv (patched)')
 {
@@ -210,9 +231,14 @@ console.log('sshArgv (patched)')
 }
 {
   const { argv, env } = sshArgv({ user: 'u', host: 'h', port: 22, authMethod: 'password', password: 's3cret-value' }, undefined, false)
-  check(argv[0] === 'sshpass' && argv[1] === '-e', 'G: POSIX password auth uses sshpass -e')
+  if (process.platform === 'win32') {
+    check(!argv.includes('sshpass'), 'G: Windows password auth does not use sshpass')
+    check(env !== undefined && env.SSH_ASKPASS === 'C:/tmp/askpass.cmd' && env.RSSH_ASKPASS_PW === 's3cret-value', 'G: Windows password travels via SSH_ASKPASS env')
+  } else {
+    check(argv[0] === 'sshpass' && argv[1] === '-e', 'G: POSIX password auth uses sshpass -e')
+    check(env !== undefined && env.SSHPASS === 's3cret-value', 'G: password travels via the SSHPASS env var')
+  }
   check(!argv.some(a => String(a).includes('s3cret-value')), 'G: password is not in argv')
-  check(env !== undefined && env.SSHPASS === 's3cret-value', 'G: password travels via the SSHPASS env var')
 }
 
 // --- terminal wrapper (patch 3) ----------------------------------------------
@@ -226,6 +252,9 @@ function extractWrapperSource() {
   return new Function('return (' + arrayText + ')')().join('\n')
 }
 
+if (process.platform === 'win32') {
+  console.log('terminal wrapper (patched): skipped on win32 (POSIX /bin/sh fixtures)')
+} else {
 console.log('terminal wrapper (patched)')
 {
   const sandbox = mkdtempSync(join(tmpdir(), 'wg-remote-wrapper-'))
@@ -278,6 +307,7 @@ console.log('terminal wrapper (patched)')
   const out = spawnSync('bash', ['-c', remoteCmd2], { env: { ...baseEnv, SHELL: join(binDir, 'fakeshell') }, encoding: 'utf8' })
   check(out.stdout.trim().endsWith(weird), 'W4: weird-but-legit path lands in the right directory')
 }
+}
 
 console.log('localToRemote dot-segment folding')
 {
@@ -329,10 +359,19 @@ console.log('freshness: nanosecond stamps + legacy tolerance + escaping links')
   try {
     mkdirSync(join(tree, 'sub'), { recursive: true })
     writeFileSync(join(tree, 'sub', 'f.txt'), 'x')
-    symlinkSync(join(tree, 'sub', 'f.txt'), join(tree, 'inner-link'))
-    check(findEscapingLink(tree) === null, 'F6: an in-tree symlink is fine')
-    symlinkSync('/etc', join(tree, 'sub', 'escape-link'))
-    check(String(findEscapingLink(tree)).endsWith('escape-link'), 'F7: a symlink escaping the tree is found')
+    let linksAvailable = true
+    try {
+      symlinkSync(join(tree, 'sub', 'f.txt'), join(tree, 'inner-link'))
+    } catch (error) {
+      if (error?.code !== 'EPERM') throw error
+      linksAvailable = false
+      console.log('  skip F6/F7: symlink creation not permitted in this environment')
+    }
+    if (linksAvailable) {
+      check(findEscapingLink(tree) === null, 'F6: an in-tree symlink is fine')
+      symlinkSync('/etc', join(tree, 'sub', 'escape-link'))
+      check(String(findEscapingLink(tree)).endsWith('escape-link'), 'F7: a symlink escaping the tree is found')
+    }
   } finally {
     rmSync(tree, { recursive: true, force: true })
   }
