@@ -98,13 +98,24 @@ describe('farm validation', () => {
       .rejects.toThrow(/does not exist/u)
   })
 
-  it('refuses to reuse an existing farm', async () => {
+  it('reuses an existing farm with the same folders', async () => {
     const alpha = await folder('alpha')
     const beta = await folder('beta')
-    await buildFarm({ name: 'same', folders: [alpha, beta] })
+    const first = await buildFarm({ name: 'same', folders: [alpha, beta] })
 
-    await expect(buildFarm({ name: 'same', folders: [alpha, beta] }))
-      .rejects.toThrow(/already exists/u)
+    const again = await buildFarm({ name: 'same', folders: [alpha, beta] })
+    expect(again.path).toBe(first.path)
+    expect(again.links).toEqual(first.links)
+  })
+
+  it('refuses to reuse a farm whose folders changed', async () => {
+    const alpha = await folder('alpha')
+    const beta = await folder('beta')
+    const gamma = await folder('gamma')
+    await buildFarm({ name: 'same-different', folders: [alpha, beta] })
+
+    await expect(buildFarm({ name: 'same-different', folders: [alpha, gamma] }))
+      .rejects.toThrow(/different folders/u)
   })
 })
 
