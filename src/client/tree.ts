@@ -376,14 +376,27 @@ function applyFolders(
   // remains the directory identity for file access; only the LABEL changes.
   const title = workspaceTitle.trim()
   if (title !== '') labels.set(workspacePath, title)
-  const extras = effectiveFolders(workspacePath, entry).slice(1)
+  // A member whose name is the same project (allowing a qualifier such as
+  // "（云端）") is the same folder from the user's point of view. Fold its
+  // sessions into the base row instead of painting a second folder row.
+  const nameOf = (value: string): string => value.replace(/[（(][^）)]*[)）]/gu, '').trim()
+  const baseName = nameOf(title)
+  const memberPaths = new Set((entry?.members ?? []).map(member => member.path))
+  const mergedMembers = new Set<string>()
+  if (baseName !== '') {
+    for (const member of entry?.members ?? []) {
+      if (nameOf(labels.get(member.path) ?? folderLabel(member.path)) === baseName) mergedMembers.add(member.path)
+    }
+  }
+  const isMergedMember = (path: string): boolean => [...mergedMembers].some(member => samePath(member, path))
+  const extras = effectiveFolders(workspacePath, entry).slice(1).filter(path => !isMergedMember(path))
   if (extras.length === 0) return { sessions }
   const root = rootOf(workspacePath, entry)
   const base: SessionNode[] = []
   const byFolder = new Map<string, SessionNode[]>()
   for (const node of sessions) {
     const owner = folderOfCwd(list.byId[node.id]?.cwd, workspacePath, entry)
-    if (samePath(owner, workspacePath)) {
+    if (samePath(owner, workspacePath) || isMergedMember(owner)) {
       base.push(node)
       continue
     }
