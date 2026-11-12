@@ -58,6 +58,9 @@ const block = (selector) => {
   const start = match.index + match[0].length - match[1].length
   return css.slice(start, css.indexOf('}', start))
 }
+assert.match(block('.wgRoot'), /height:100%/, 'the root consumes the sidebar slot height')
+assert.match(block('.wgRoot'), /max-height:100%/, 'the root cannot grow past its slot')
+assert.match(block('.wgRoot'), /overflow:hidden/, 'the root clips instead of scrolling the whole sidebar')
 assert.match(block('.wgDock'), /border-top:1px solid/, 'the dock draws the divider against the tree')
 assert.match(block('.wgDock'), /max-height:min\(62vh,560px\)/, 'the dock is capped so the tree always keeps room')
 assert.match(block('.wgDock'), /overflow:hidden/, 'the dock clips its own overflow instead of painting over the tree')
