@@ -9,6 +9,14 @@
   overflow:hidden;
 }
 
+/* Remote SSH's legacy title matcher appends a globe to the first SVG it
+   finds. Our row starts with a disclosure slot, so the badge can land on the
+   wrong icon. Suppress only that injected decoration within this tree; keep
+   the node in place so the remote plugin's observer does not reinsert it. */
+.wgRoot [data-rssh-globe] {
+  display:none !important;
+}
+
 .wgSectionHeader {
   flex:none;
   align-items:center;
@@ -274,6 +282,15 @@
   align-items:center;
   transition:transform .12s;
   display:inline-flex;
+  /* The slot owns exactly ONE glyph. Clip it so nothing that lands here from
+     another layer (an overlay, a duplicated svg) can paint a second shape on top
+     of the triangle — that stray shape reads as a broken, mushy icon. */
+  overflow:hidden;
+}
+
+/* Keep only the first svg in the slot; a second one is never part of a row. */
+.wgChevron > svg:not(:first-child) {
+  display:none;
 }
 
 .wgChevronOpen {
@@ -286,6 +303,17 @@
   justify-content:center;
   align-items:center;
   display:inline-flex;
+  /* Fixed 16px slot: without an explicit box the glyph was free to be squashed
+     by the row's flex track, which turned the project folder into a grey blob. */
+  width:16px;
+  height:16px;
+}
+
+.wgCategoryIcon > svg {
+  display:block;
+  width:16px;
+  height:16px;
+  flex:none;
 }
 
 .wgCategoryLabel {
