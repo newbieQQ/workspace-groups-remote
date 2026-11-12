@@ -11,6 +11,23 @@
   overflow:hidden;
 }
 
+/* The host sidebar scrollport lays its workspace region out as a max-content
+   grid row. That makes the whole sidebar scroll as one block, so the plugin's
+   own .wgRoot height cannot fill the viewport and the bottom dock ends up
+   right after the tree instead of pinned to the sidebar bottom. Only when our
+   tree is mounted, give the workspace region the remaining row; the tree body
+   then owns the scrolling and .wgDock stays outside it. */
+[data-sidebar-scrollport]:has(> [class*="regionArea"] > .wgRoot) {
+  grid-template-rows:8px max-content 2px minmax(0, 1fr);
+  align-content:stretch;
+  overflow-y:hidden;
+}
+
+[data-sidebar-scrollport] > [class*="regionArea"]:has(> .wgRoot) {
+  min-height:0;
+  overflow:hidden;
+}
+
 /* Remote SSH's legacy title matcher appends a globe to the first SVG it
    finds. Our row starts with a disclosure slot, so the badge can land on the
    wrong icon. Suppress only that injected decoration within this tree; keep
