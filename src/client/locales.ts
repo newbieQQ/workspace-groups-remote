@@ -41,6 +41,11 @@ export type WorkspaceGroupsKey =
   | 'folder.sectionList'
   | 'folder.sectionAdd'
   | 'folder.emptyHint'
+  | 'folder.mergeTitle'
+  | 'folder.mergeAction'
+  | 'folder.mergeHint'
+  | 'folder.mergeDone'
+  | 'folder.mergeFailed'
   | 'folder.base'
   | 'folder.setRoot'
   | 'folder.rootBadge'
@@ -233,6 +238,11 @@ export const zh: WorkspaceGroupsDict = {
   'folder.sectionList': '项目文件夹',
   'folder.sectionAdd': '添加文件夹',
   'folder.emptyHint': '还没有额外文件夹。下面挂一个目录，它的会话会独立运行，模型也能直接读到里面的文件。',
+  'folder.mergeTitle': '合并成一个总文件夹',
+  'folder.mergeAction': '生成总文件夹并添加为工作区',
+  'folder.mergeHint': '在旁边建一个目录，用链接把这些文件夹放进去，再注册成工作区。不复制、不移动原文件夹；之后在这个工作区里的会话可以同时读写它们。',
+  'folder.mergeDone': '已生成总文件夹：',
+  'folder.mergeFailed': '生成总文件夹失败',
   'folder.base': '基础文件夹',
   'folder.setRoot': '设为根目录',
   'folder.rootBadge': '根目录',
@@ -424,6 +434,11 @@ export const en: WorkspaceGroupsDict = {
   'folder.sectionList': 'Project folders',
   'folder.sectionAdd': 'Add a folder',
   'folder.emptyHint': 'No extra folders yet. A folder added below runs its sessions on its own, so the agent can read the files inside it directly.',
+  'folder.mergeTitle': 'Merge into one folder',
+  'folder.mergeAction': 'Create the merged folder as a workspace',
+  'folder.mergeHint': 'Builds one directory that links these folders side by side and registers it as a workspace. Nothing is copied or moved; sessions in that workspace can read and write all of them.',
+  'folder.mergeDone': 'Merged folder created: ',
+  'folder.mergeFailed': 'Could not build the merged folder',
   'folder.base': 'Base folder',
   'folder.setRoot': 'Set as root',
   'folder.rootBadge': 'Root',

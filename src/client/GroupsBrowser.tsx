@@ -60,6 +60,7 @@ import { FoldersConflictError, loadFolders, saveFolders } from './folders-persis
 import { createRemoteFolder, createWorkspaceDirectory, deleteRemoteWorkspaceRecord, listRemoteProfiles, remoteFolderWorkspace, type RemoteFolderWorkspace, type RemoteProfileSummary } from './folder-directory.ts'
 import { fetchOpenInApps, folderAppId, openPathInApp } from './open-folder.ts'
 import { FoldersDialog } from './FoldersDialog.tsx'
+import { buildFarm } from './folders-farm.ts'
 import { QuickPanel } from './QuickPanel.tsx'
 import { SessionTabs } from './SessionTabs.tsx'
 import css from './styles.css?inline'
@@ -1145,6 +1146,34 @@ export function GroupsBrowser({
 
   const setFolderRoot = (workspaceId: WorkspaceId, path: string): void => {
     writeFolderEntry(workspaceId, setRoot(entryFor(foldersDoc, workspaceId as string), path))
+  }
+
+  /**
+   * Gather this project's folders into one link directory and register it as a
+   * workspace, so one session reaches all of them. The folders themselves are
+   * never copied, moved or deleted; the farm holds links only.
+   */
+  const buildFarmFor = async (workspaceId: WorkspaceId): Promise<void> => {
+    if (foldersBusy) return
+    const workspace = workspaces.find(item => item.workspaceId === workspaceId)
+    if (workspace === undefined) return
+    const folders = effectiveFolders(workspace.path, entryFor(foldersDoc, workspaceId as string))
+    if (folders.length < 2) {
+      notifyFolder(t('folder.emptyHint'))
+      return
+    }
+    setFoldersBusy(true)
+    try {
+      const farm = await buildFarm(workspace.title, folders)
+      // Registering the farm is a separate step: a created directory without a
+      // workspace is harmless, and the error still names what already exists.
+      await createWorkspace({ path: farm.path })
+      notifyFolder(`${t('folder.mergeDone')} ${farm.path}`)
+    } catch (reason) {
+      notifyFolder(`${t('folder.mergeFailed')}: ${reason instanceof Error ? reason.message : String(reason)}`)
+    } finally {
+      setFoldersBusy(false)
+    }
   }
 
   /**
@@ -2255,6 +2284,7 @@ export function GroupsBrowser({
             t={t}
             busy={foldersBusy}
             canOpen={openFolderPath !== undefined}
+            onBuildFarm={() => { void buildFarmFor(foldersTarget) }}
             remote={isRemoteWorkspace(workspace)}
             ownerRemotePath={foldersOwnerRemote}
             profiles={remoteProfiles}
