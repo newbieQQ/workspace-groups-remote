@@ -181,6 +181,38 @@ describe('category appearance on the tree nodes', () => {
 })
 
 describe('folder rows use confirmed display names', () => {
+  it('folds a same-name local member into the base row instead of a second folder', () => {
+    const owner = workspace('ws-remote', 'C:/mirror/w123', '云端记忆系统（云端）', ['s1'])
+    const member = workspace('ws-local', 'C:/Users/qyh15/云端记忆系统', '云端记忆系统', ['s2'])
+    const list = {
+      ids: ['s1', 's2'],
+      byId: {
+        s1: { ...session('s1', 'remote'), cwd: 'C:/mirror/w123' },
+        s2: { ...session('s2', 'local'), cwd: 'C:/Users/qyh15/云端记忆系统' },
+      },
+      current: 's1',
+      phase: 'ready',
+      subagentsByParent: {},
+    } as unknown as SessionListState
+    const folders: FoldersDocument = {
+      version: 1,
+      revision: 1,
+      workspaces: {
+        'ws-remote': {
+          folders: [],
+          members: [{ path: 'C:/Users/qyh15/云端记忆系统', workspaceId: 'ws-local', kind: 'local' }],
+        },
+      },
+    }
+    const view = { expandedCategories: [], expandedWorkspaces: ['ws-remote'] }
+    const top = deriveTopLevel(list, [owner, member], [], CONFIG, view, { categories: [], assignments: {} }, new Map(), folders)
+    const node = top.find(item => item.workspaceId === 'ws-remote')
+    expect(node).toBeDefined()
+    // The member row is gone; both sessions live on the single base row.
+    expect(node?.folders).toBeUndefined()
+    expect(node?.sessions.map(item => item.id)).toEqual(['s1', 's2'])
+  })
+
   it('base row shows the project title, not the local mirror basename', () => {
     const ws = workspace('ws-remote', 'C:/mirror/w123', '远程项目', ['s1'])
     const folders: FoldersDocument = {
