@@ -161,6 +161,14 @@ const FIND_REPLACEMENT = `      // [workspace-groups-remote patch] Canonical-pat
 // Each entry: [label, anchor, replacement]. Anchors are exact byte strings
 // from the vendored file; every one must occur exactly once.
 const TRANSFORMS = [
+  ['patch 11: settings entry id falls back to the bundle row',
+    'const entryId = ownEntryId(ctx, name) || NS;',
+    `// [workspace-groups-remote patch] Inside the merged bundle there is no
+  // loader row named dsh-remote-ssh: the settings entry lives on the
+  // bundle's own row, whose composed plugin exports this plugin's Config.
+  // Resolve that row before falling back to the standalone namespace.
+  const entryId = ownEntryId(ctx, name) || ownEntryId(ctx, "workspace-groups-remote") || NS;`],
+
   ['patch 2a: sshArgv "--" before target',
     '  const argv = head.concat(opts, [target]);',
     `  // [workspace-groups-remote patch] "--" ends ssh option parsing: a

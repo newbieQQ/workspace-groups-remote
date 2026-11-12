@@ -20,12 +20,18 @@ const check = (label, ok) => { console.log(`${ok ? '✓' : '✗ FAIL'} ${label}`
 
 const host = await import(join(root, 'lib/index.js'))
 check('host name is the package name', host.name === pkg.name)
+check('host exports the remote-ssh Config at top level (owns the settings entry)', !!host.Config)
 check('host inject is the union', JSON.stringify(host.inject) === JSON.stringify(['webServer', 'subprocess', 'tools', 'workspaceRegistry']))
 const applied = []
 host.apply({ plugin: (plugin, config) => applied.push({ plugin, config }) }, {})
 check('apply composes exactly two plugins', applied.length === 2)
 check('groups half keeps its name/inject', applied[0]?.plugin.name === 'workspace-groups-local' && JSON.stringify(applied[0]?.plugin.inject) === '["webServer"]')
-check('remote-ssh half keeps its name/inject/Config', applied[1]?.plugin.name === '@zhangfengshun/dsh-remote-ssh' && !!applied[1]?.plugin.Config)
+// 1.0.3: the child must NOT declare Config — with the same Config on both the
+// composed plugin and the child, the child's fiber silently never applies on
+// DSH 0.2.2-rc.2 (remote half dead). The settings entry is owned by the
+// composed plugin's top-level Config export instead (checked in the repo
+// source test below via lib/index.js re-export).
+check('remote-ssh half keeps its name/inject and declares NO Config', applied[1]?.plugin.name === '@zhangfengshun/dsh-remote-ssh' && !('Config' in (applied[1]?.plugin ?? {})))
 check('remote-ssh receives the nested row config', JSON.stringify(applied[1]?.config) === '{}')
 
 const client = readFileSync(join(root, 'lib/client.js'), 'utf8')
