@@ -151,22 +151,38 @@ export async function buildFarm(input: { name: string; folders: readonly unknown
 
   const root = defaultFarmRoot()
   const path = join(root, farmDirectoryName(String(input.name)))
+  const taken = new Set<string>()
+  const links: FarmLink[] = targets.map(target => ({ name: linkNameFor(target, taken), target }))
   await mkdir(root, { recursive: true })
   try {
     await mkdir(path)
   } catch (error) {
     const code = (error as { code?: string }).code
-    if (code === 'EEXIST') throw new Error(`farm: already exists, remove it first: ${path}`)
-    throw new Error(`farm: cannot create ${path}: ${error instanceof Error ? error.message : String(error)}`)
+    if (code !== 'EEXIST') {
+      throw new Error(`farm: cannot create ${path}: ${error instanceof Error ? error.message : String(error)}`)
+    }
+    // Repeating the same gather is harmless: the workspace may already own this
+    // farm. Reuse it only when every entry is the same link; anything else is a
+    // real conflict and must not be silently merged into.
+    const existing = (await readdir(path)).sort()
+    const expected = links.map(link => link.name).sort()
+    if (existing.length !== expected.length || existing.some((name, index) => name !== expected[index])) {
+      throw new Error(`farm: already exists with different folders: ${path}`)
+    }
+    for (const link of links) {
+      const entryPath = join(path, link.name)
+      const info = await lstat(entryPath)
+      if (!info.isSymbolicLink()) throw new Error(`farm: already exists, entry is not a link: ${entryPath}`)
+      const actual = await realpath(entryPath)
+      const same = WINDOWS ? actual.toLowerCase() === link.target.toLowerCase() : actual === link.target
+      if (!same) throw new Error(`farm: already exists, link points elsewhere: ${entryPath}`)
+    }
+    return { path, links }
   }
 
-  const taken = new Set<string>()
-  const links: FarmLink[] = []
   try {
-    for (const target of targets) {
-      const name = linkNameFor(target, taken)
-      await symlink(target, join(path, name), WINDOWS ? 'junction' : 'dir')
-      links.push({ name, target })
+    for (const link of links) {
+      await symlink(link.target, join(path, link.name), WINDOWS ? 'junction' : 'dir')
     }
   } catch (error) {
     await discard(path)
