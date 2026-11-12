@@ -17,13 +17,13 @@
    right after the tree instead of pinned to the sidebar bottom. Only when our
    tree is mounted, give the workspace region the remaining row; the tree body
    then owns the scrolling and .wgDock stays outside it. */
-[data-sidebar-scrollport]:has(> [class*="regionArea"] > .wgRoot) {
+[data-sidebar-scrollport]:has([class*="regionArea"] .wgRoot) {
   grid-template-rows:8px max-content 2px minmax(0, 1fr);
   align-content:stretch;
   overflow-y:hidden;
 }
 
-[data-sidebar-scrollport] > [class*="regionArea"]:has(> .wgRoot) {
+[data-sidebar-scrollport] > [class*="regionArea"]:has(.wgRoot) {
   min-height:0;
   overflow:hidden;
 }
