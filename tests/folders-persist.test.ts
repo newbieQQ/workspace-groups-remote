@@ -22,9 +22,20 @@ function stubFetch(status: number, body: unknown, capture?: (url: string, init?:
 describe('loadFolders revision', () => {
   it('carries the stored revision, defaulting an absent one to 0', async () => {
     const withRevision = await loadFolders(stubFetch(200, { version: 1, revision: 7, workspaces: {} }))
+    expect(withRevision.ok).toBe(true)
     expect(withRevision.document.revision).toBe(7)
     const without = await loadFolders(stubFetch(200, { version: 1, workspaces: {} }))
+    expect(without.ok).toBe(true)
     expect(without.document.revision).toBe(0)
+  })
+
+  it('does not turn HTTP 503 or malformed JSON into a successful empty document', async () => {
+    const unavailable = await loadFolders(stubFetch(503, {}))
+    expect(unavailable.ok).toBe(false)
+    expect(unavailable.error).toContain('503')
+    const malformed = await loadFolders(stubFetch(200, { version: 2, workspaces: {} }))
+    expect(malformed.ok).toBe(false)
+    expect(malformed.error).toContain('格式无效')
   })
 })
 
@@ -36,9 +47,11 @@ describe('saveFolders', () => {
   })
   it('rejects with FoldersConflictError carrying the current document on 409', async () => {
     const current = { version: 1, revision: 5, workspaces: {} }
-    const failure = await saveFolders({ version: 1, revision: 2, workspaces: {} }, stubFetch(409, current)).catch((e: unknown) => e)
+    const attempted = { version: 1, revision: 2, workspaces: { a: { folders: ['/x'] } } }
+    const failure = await saveFolders(attempted, stubFetch(409, current)).catch((e: unknown) => e)
     expect(failure).toBeInstanceOf(FoldersConflictError)
     expect((failure as FoldersConflictError).current).toEqual(current)
+    expect((failure as FoldersConflictError).attempted).toEqual(attempted)
   })
 })
 

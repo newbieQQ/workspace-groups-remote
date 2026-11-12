@@ -26,12 +26,26 @@ export interface FoldersSnapshot {
     readonly remoteBase?: string;
 }
 /**
- * Fetch the stored folder overlay.
- * @param fetchImpl - fetch implementation (injectable for tests).
- * @returns the overlay plus the reported mirror base; the empty document on any
- * failure.
+ * One folder-overlay read result. A failed read must never masquerade as the
+ * empty document: the browser uses `ok` to keep the last confirmed rows and
+ * show a retryable error instead of rendering every member as a duplicate.
  */
-export declare function loadFolders(fetchImpl?: typeof fetch): Promise<FoldersSnapshot>;
+export interface FoldersLoadResult extends FoldersSnapshot {
+    readonly ok: boolean;
+    /** Human-readable failure reason; absent on success. */
+    readonly error?: string;
+}
+/**
+ * Fetch the stored folder overlay.
+ *
+ * A non-2xx response, a malformed body or a transport error is returned as
+ * `ok:false` with the reason. The empty document is still present for callers
+ * that only need a safe value, but `ok` is the authority: the browser must not
+ * treat a failed read as "no folders".
+ * @param fetchImpl - fetch implementation (injectable for tests).
+ * @param signal - optional cancellation for a superseded read/retry.
+ */
+export declare function loadFolders(fetchImpl?: typeof fetch, signal?: AbortSignal): Promise<FoldersLoadResult>;
 /**
  * Read a whole folder document off the wire (GET response, PUT echo or the
  * 409 conflict body), or null when it is not a version-1 document.
@@ -45,7 +59,9 @@ export declare function parseWireDocument(source: Record<string, unknown>): Fold
  */
 export declare class FoldersConflictError extends Error {
     readonly current: FoldersDocument;
-    constructor(current: FoldersDocument);
+    /** The unsaved document the failed PUT attempted to write. */
+    readonly attempted: FoldersDocument;
+    constructor(current: FoldersDocument, attempted?: FoldersDocument);
 }
 /**
  * Store the whole folder overlay.

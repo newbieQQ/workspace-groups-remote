@@ -96,6 +96,13 @@ export type WorkspaceGroupsKey =
   | 'folder.home'
   | 'folder.refresh'
   | 'folder.loading'
+  | 'folder.loadingState'
+  | 'folder.loadError'
+  | 'folder.refreshError'
+  | 'folder.retry'
+  | 'folder.retryDraft'
+  | 'folder.discardDraft'
+  | 'folder.conflictDetail'
   | 'folder.emptyDir'
   | 'group.create'
   | 'group.createTitle'
@@ -281,6 +288,13 @@ export const zh: WorkspaceGroupsDict = {
   'folder.home': '主目录',
   'folder.refresh': '刷新',
   'folder.loading': '正在读取远端目录…',
+  'folder.loadingState': '正在读取文件夹配置…',
+  'folder.loadError': '文件夹配置读取失败（未显示为空分组）',
+  'folder.refreshError': '文件夹配置刷新失败，继续显示上次确认的配置',
+  'folder.retry': '重试',
+  'folder.retryDraft': '重新应用我的修改',
+  'folder.discardDraft': '保留服务端版本',
+  'folder.conflictDetail': '文件夹已被另一个窗口修改：下面是服务端当前版本；你未保存的修改仍保留在此处，可重新应用。',
   'folder.emptyDir': '这个目录下没有子目录',
   'group.create': '新建分组',
   'group.createTitle': '新建分组',
@@ -465,6 +479,13 @@ export const en: WorkspaceGroupsDict = {
   'folder.home': 'Home',
   'folder.refresh': 'Refresh',
   'folder.loading': 'Reading the remote directory…',
+  'folder.loadingState': 'Reading folder configuration…',
+  'folder.loadError': 'Could not read folder configuration (not shown as an empty grouping)',
+  'folder.refreshError': 'Could not refresh folder configuration; showing the last confirmed state',
+  'folder.retry': 'Retry',
+  'folder.retryDraft': 'Reapply my changes',
+  'folder.discardDraft': 'Keep server version',
+  'folder.conflictDetail': 'Folders changed in another window. The server version is shown below; your unsaved changes are kept here and can be reapplied.',
   'folder.emptyDir': 'No subdirectories here',
   'group.create': 'New group',
   'group.createTitle': 'New group',

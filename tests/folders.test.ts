@@ -429,7 +429,9 @@ describe('folders revision guard (route)', () => {
         } as unknown as ServerResponse)
         return { status, text }
       }
-      const first = { version: 1, revision: 0, workspaces: { a: { folders: ['/x'] } } }
+      const rootA = process.platform === 'win32' ? 'C:\\x' : '/x'
+      const rootB = process.platform === 'win32' ? 'C:\\y' : '/y'
+      const first = { version: 1, revision: 0, workspaces: { a: { folders: [rootA] } } }
       const accepted = await request('PUT', JSON.stringify(first))
       expect(accepted.status).toBe(200)
       expect(JSON.parse(accepted.text!)).toEqual({ ...first, revision: 1 })
@@ -438,7 +440,7 @@ describe('folders revision guard (route)', () => {
       expect(stale.status).toBe(409)
       expect(JSON.parse(stale.text!)).toEqual({ ...first, revision: 1 })
       // Building on the current revision works and bumps again.
-      const second = { version: 1, revision: 1, workspaces: { a: { folders: ['/x', '/y'] } } }
+      const second = { version: 1, revision: 1, workspaces: { a: { folders: [rootA, rootB] } } }
       const accepted2 = await request('PUT', JSON.stringify(second))
       expect(accepted2.status).toBe(200)
       expect(JSON.parse(accepted2.text!).revision).toBe(2)
@@ -468,26 +470,31 @@ describe('folders revision (validation + tolerant read)', () => {
 
 describe('write-boundary hardening (dot segments, __proto__, UNC hints)', () => {
   it('validateFoldersDocument rejects dot segments in folder and member paths', () => {
+    const badFolder = process.platform === 'win32' ? 'C:\\x\\..\\y' : '/x/../y'
+    const badMember = process.platform === 'win32' ? 'C:\\x\\.\\y' : '/x/./y'
     expect(() => hostFolders.validateFoldersDocument({
-      version: 1, workspaces: { a: { folders: ['/x/../y'] } },
+      version: 1, workspaces: { a: { folders: [badFolder] } },
     })).toThrow(/"\.\." segments/)
     expect(() => hostFolders.validateFoldersDocument({
-      version: 1, workspaces: { a: { folders: [], members: [{ path: '/x/./y', workspaceId: 'b', kind: 'local' }] } },
+      version: 1, workspaces: { a: { folders: [], members: [{ path: badMember, workspaceId: 'b', kind: 'local' }] } },
     })).toThrow(/"\.\." segments/)
   })
   it('validateFoldersDocument rejects a __proto__ workspace id; the tolerant read skips it', () => {
-    expect(() => hostFolders.validateFoldersDocument({
-      version: 1, workspaces: { ['__proto__']: { folders: ['/x'] } },
-    })).toThrow(/workspace ids/)
-    const parsed = hostFolders.parseFoldersDocument({
-      version: 1, workspaces: { ['__proto__']: { folders: ['/x'] }, ok: { folders: ['/y'] } },
-    })
+    const doc: Record<string, unknown> = Object.create(null)
+    doc.version = 1
+    const workspaces: Record<string, unknown> = Object.create(null)
+    workspaces['__proto__'] = { folders: [process.platform === 'win32' ? 'C:\\x' : '/x'] }
+    workspaces.ok = { folders: [process.platform === 'win32' ? 'C:\\y' : '/y'] }
+    doc.workspaces = workspaces
+    expect(() => hostFolders.validateFoldersDocument(doc)).toThrow(/workspace ids/)
+    const parsed = hostFolders.parseFoldersDocument(doc)
     expect(Object.keys(parsed.workspaces)).toEqual(['ok'])
     expect(({} as Record<string, unknown>).polluted).toBeUndefined()
   })
   it('validateRemoteHintPath rejects UNC paths', () => {
-    expect(() => hostFolders.validateRemoteHintPath('\\\\server\\share\\dir')).toThrow(/UNC/)
-    expect(hostFolders.validateRemoteHintPath('/home/u/proj')).toBe('/home/u/proj')
+    expect(() => hostFolders.validateRemoteHintPath(String.raw`\\server\share\dir`)).toThrow(/UNC/)
+    expect(hostFolders.validateRemoteHintPath(process.platform === 'win32' ? 'C:\\home\\u\\proj' : '/home/u/proj'))
+      .toBe(process.platform === 'win32' ? 'C:\\home\\u\\proj' : '/home/u/proj')
   })
   it('addMember keeps a root that names the member path', () => {
     const entry = addMember(

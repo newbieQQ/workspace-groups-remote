@@ -705,6 +705,22 @@
   word-break:break-word;
 }
 
+.wgSmallAction {
+  border:1px solid var(--dsw-border-1,#7f7f7f55);
+  border-radius:4px;
+  background:transparent;
+  color:inherit;
+  font:inherit;
+  font-size:10.5px;
+  line-height:1;
+  padding:3px 6px;
+  cursor:pointer;
+}
+
+.wgSmallAction:hover {
+  border-color:var(--dsw-accent,#4c8dff);
+}
+
 .wgRail {
   flex-direction:column;
   align-items:center;
