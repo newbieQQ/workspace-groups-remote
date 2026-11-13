@@ -195,13 +195,83 @@ const occurrences = body.split(ROOT_LABEL_OLD).length - 1
 if (occurrences !== 1) throw new Error('remote-ssh client: root-label block anchor found ' + occurrences + ' times')
 body = body.replace(ROOT_LABEL_OLD, ROOT_LABEL_NEW)
 
+// [workspace-groups-remote patch] Settings face replacement.
+// Upstream's settings face (SettingsSection, ~280 lines of compiled JS) is
+// replaced at build time by the maintainable source component in
+// src/client/rssh-settings. The merged client entry passes a `compose` object
+// into this factory (createSettingsSection + dictionary namespace); the
+// vendored component stays as a fallback for a factory invoked without one
+// (older entry, verification harness). Anchor-asserted like every other
+// patch: an upstream change fails the build loudly instead of silently
+// shipping the old face.
+const SETTINGS_REGISTRATION_OLD = `        slots.inject("settings.section", function () {
+          return slots.register({
+            name: "settings.section",
+            id: "remote-ssh",
+            order: 200,
+            label: function () { return i18n.t("settings.nav"); },
+            locale: NS
+          }, SettingsSection);
+        });`
+
+const SETTINGS_REGISTRATION_NEW = `        // [workspace-groups-remote patch] Settings face replacement:
+        // the maintainable source component (src/client/rssh-settings) owns
+        // the page; allocate it once per registration and keep upstream's
+        // SettingsSection as the fallback when compose is absent. The
+        // dictionary namespace comes from compose so the slot renderer
+        // injects the component's typed \`t\` seat from this bundle's own
+        // locale registration.
+        slots.inject("settings.section", function () {
+          var settingsComponent = SettingsSection;
+          var settingsLocale = NS;
+          try {
+            if (compose && typeof compose.createSettingsSection === "function") {
+              settingsComponent = compose.createSettingsSection({ api: api });
+              if (compose.settingsNamespace) settingsLocale = String(compose.settingsNamespace);
+            }
+          } catch (error) {
+            settingsComponent = SettingsSection;
+            settingsLocale = NS;
+          }
+          return slots.register({
+            name: "settings.section",
+            id: "remote-ssh",
+            order: 200,
+            label: function () { return i18n.t("settings.nav"); },
+            locale: settingsLocale
+          }, settingsComponent);
+        });`
+
+const settingsOccurrences = body.split(SETTINGS_REGISTRATION_OLD).length - 1
+if (settingsOccurrences !== 1) {
+  throw new Error('remote-ssh client: settings registration anchor found ' + settingsOccurrences + ' times — upstream changed, re-check the transform')
+}
+body = body.replace(SETTINGS_REGISTRATION_OLD, SETTINGS_REGISTRATION_NEW)
+
 const out = header
   + '// --- merged-bundle transform (scripts/build-remote-ssh-client.mjs) ---\n'
   + '// Upstream registers this factory under its own package id; the merged\n'
   + '// package registers ONE client row, so the factory is exported instead\n'
-  + '// and applied by src/client/index.ts. Body below is upstream-verbatim.\n'
-  + 'export default (require) => {'
+  + '// and applied by src/client/index.ts. Body below is upstream-verbatim\n'
+  + '// apart from anchor-asserted patches (root label, settings face).\n'
+  + '// The second argument is the merged entry\'s compose seam:\n'
+  + '//   compose.settingsNamespace + compose.createSettingsSection(deps)\n'
+  + 'export default (require, compose) => {'
   + body
   + '\n}\n'
+
+// Post-conditions: the vulnerable/old forms must be gone and the compose
+// seam present, so a successful build can never silently keep the old face.
+if (out.includes('}, SettingsSection);')) {
+  throw new Error('remote-ssh client: the upstream settings registration survived the transform')
+}
+for (const required of [
+  'export default (require, compose) => {',
+  'compose.createSettingsSection({ api: api })',
+  'var settingsComponent = SettingsSection;',
+  'locale: settingsLocale',
+]) {
+  if (!out.includes(required)) throw new Error('remote-ssh client: expected transformed form missing: ' + required)
+}
 writeFileSync(join(root, 'src/client/remote-ssh-factory.generated.mjs'), out)
 console.log('remote-ssh client factory -> src/client/remote-ssh-factory.generated.mjs')

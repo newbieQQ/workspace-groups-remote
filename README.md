@@ -34,6 +34,18 @@ Fixes from a 2026-11-11 audit, all applied by the same build-time patch script (
 
 `lib/index.js` (source: `bundle/index.js`) is composition only — it applies both plugins on one fiber. `cordis.patch.yml` inserts a single row for this package and carries remote-ssh's `better-sidebar` / `terminal-controller` shell overrides over verbatim.
 
+### Remote-SSH settings page (1.3.0)
+
+The settings page is a maintainable source component in this repository (`src/client/rssh-settings/`). At build time `scripts/build-remote-ssh-client.mjs` replaces the vendored compiled settings section with it through anchor assertions, so the vendor tree stays pristine. The page has four regions — My connections / Add connection / Remote workspaces / Advanced settings. Remote workspaces and Advanced settings start collapsed; collapsing only changes visibility, never clears drafts or triggers a save, and the collapsed Advanced region shows no inner save button.
+
+- **My connections**: each card tests independently (success, connected-with-warning, failure and diagnostics are shown separately); delete asks for confirmation in-card, naming the connection and its effect.
+- **Add connection**: every field and conditional display is kept (key auth shows the private key path; password auth shows a masked input and hides the key path); an invalid port is rejected with a clear error instead of silently falling back to 22; ProxyJump lives in the collapsed “More connection options”.
+- **Import from the system SSH config**: a multi-select dialog that checks every save result, counts real successes/failures separately, and can retry failed entries only (successful ones are never resubmitted).
+- **Remote workspaces**: per-workspace write-back, write-back exclude, sync scope, sync exclude and size cap (GiB), saved by workspace id; pull/push are blocked with a “save first” notice while a draft is unsaved.
+- **Advanced settings**: terminal node path, write-back policy and new-workspace sync defaults; read and written separately from per-workspace settings, so neither overwrites the other.
+
+New copy uses its own `dsh-remote-ssh-settings` locale namespace (Chinese + English); CSS is scoped under `.rsui-root` and does not leak into other plugins.
+
 ### Install / migrate
 
 1. Remove the two old bundles from the profile (`workspace-groups-local` and `@zhangfengshun/dsh-remote-ssh`).
@@ -60,7 +72,7 @@ The vendored upstream suite also runs in place once its dependencies resolve —
 
 ### Maintenance
 
-The vendored code is not a fork: to update remote-ssh, replace `vendor/dsh-remote-ssh/` with the new upstream tree, run `npm run vendor:manifest` to re-record its sha256 manifest, and rebuild — the client transform asserts its anchors and fails loudly if upstream changes its bundle wrapper shape. Local changes outside the vendor tree: `src/client/GroupsBrowser.tsx` narrows a possibly-null ref explicitly (`pending !== null && ...`) because the fork's `tsc` types step rejected the optional-chain form (semantics unchanged), and the duplicate-folder guards described above (`src/core/folders.ts`, `addRemoteFolderTo`). The host patch script likewise asserts its anchors and fails loudly if upstream changes the anchored code.
+The vendored code is not a fork: to update remote-ssh, replace `vendor/dsh-remote-ssh/` with the new upstream tree, run `npm run vendor:manifest` to re-record its sha256 manifest, and rebuild — the client transform asserts its anchors and fails loudly if upstream changes its bundle wrapper shape. The settings-face replacement is anchor-asserted as well: if upstream changes the settings section structure, the build fails instead of silently keeping the old page. Local changes outside the vendor tree: `src/client/GroupsBrowser.tsx` narrows a possibly-null ref explicitly (`pending !== null && ...`) because the fork's `tsc` types step rejected the optional-chain form (semantics unchanged), and the duplicate-folder guards described above (`src/core/folders.ts`, `addRemoteFolderTo`). The host patch script likewise asserts its anchors and fails loudly if upstream changes the anchored code.
 
 ## Preview
 

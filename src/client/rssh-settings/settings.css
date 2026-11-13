@@ -1,0 +1,1066 @@
+/*
+ * Remote-SSH settings face — all selectors are `.rsui-`-prefixed and rooted
+ * at `.rsui-root` (nothing global: no html/body/:root/universal selectors).
+ *
+ * Colour comes from DSH theme tokens so the page follows the shell's light or
+ * dark theme automatically. The documented safe token set is used directly;
+ * anything else is written as `var(--token, var(--dsw-alias-…))` so a shell
+ * that lacks the token still renders with a themed fallback.
+ *
+ * Radii / control height are the local scale declared on `.rsui-root`:
+ * cards 16px, sections 12px, controls 10px, inputs 36px.
+ */
+
+.rsui-root {
+  --rssh-radius-card: 16px;
+  --rssh-radius-section: 12px;
+  --rssh-radius-control: 10px;
+  --rssh-control-height: 36px;
+
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  width: 100%;
+  min-width: 0;
+  color: var(--dsw-alias-label-primary);
+  font-size: 14px;
+  line-height: 22px;
+}
+
+/* ------------------------------------------------------------------ */
+/* Page header                                                         */
+/* ------------------------------------------------------------------ */
+
+.rsui-page-head {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.rsui-page-title {
+  margin: 0;
+  font-size: 20px;
+  line-height: 28px;
+  font-weight: 600;
+  color: var(--dsw-alias-label-primary);
+  overflow-wrap: anywhere;
+}
+
+.rsui-page-subtitle {
+  margin: 0;
+  font-size: 13px;
+  line-height: 20px;
+  color: var(--dsw-alias-label-secondary);
+  overflow-wrap: anywhere;
+}
+
+/* ------------------------------------------------------------------ */
+/* Sections (outer cards: thin border + light shadow)                  */
+/* ------------------------------------------------------------------ */
+
+.rsui-section {
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+  padding: 16px;
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: var(--rssh-radius-section);
+  background: var(--dsw-alias-bg-layer-2);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05), 0 2px 8px rgba(0, 0, 0, 0.04);
+}
+
+.rsui-section-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+}
+
+.rsui-section-title-block {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.rsui-section-title {
+  margin: 0;
+  font-size: 15px;
+  line-height: 22px;
+  font-weight: 600;
+  color: var(--dsw-alias-label-primary);
+  overflow-wrap: anywhere;
+}
+
+.rsui-section-summary {
+  margin: 0;
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--dsw-alias-label-tertiary);
+  overflow-wrap: anywhere;
+}
+
+.rsui-count {
+  flex: none;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--dsw-alias-button-ghost-active-fill, var(--dsw-alias-interactive-bg-hover));
+  color: var(--dsw-alias-label-secondary);
+  font-size: 12px;
+  line-height: 18px;
+  white-space: nowrap;
+}
+
+.rsui-section-loading {
+  margin: 0;
+}
+
+/* ------------------------------------------------------------------ */
+/* Disclosure headers (button + mounted region toggled with hidden)    */
+/* ------------------------------------------------------------------ */
+
+.rsui-disclosure-head {
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-width: 0;
+  margin: 0;
+  padding: 4px 6px;
+  border: 0;
+  border-radius: var(--rssh-radius-control);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.rsui-disclosure-head:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.rsui-disclosure-head:focus-visible {
+  outline: 2px solid var(--dsw-alias-state-business-primary);
+  outline-offset: 2px;
+}
+
+.rsui-head-text {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.rsui-head-title {
+  font-size: 15px;
+  line-height: 22px;
+  font-weight: 600;
+  color: var(--dsw-alias-label-primary);
+  overflow-wrap: anywhere;
+}
+
+.rsui-head-title-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  flex-wrap: wrap;
+}
+
+.rsui-head-summary {
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--dsw-alias-label-tertiary);
+  overflow-wrap: anywhere;
+}
+
+.rsui-head-count {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--dsw-alias-button-ghost-active-fill, var(--dsw-alias-interactive-bg-hover));
+  color: var(--dsw-alias-label-secondary);
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.rsui-chevron {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.rsui-chevron svg {
+  transition: transform 160ms ease;
+}
+
+.rsui-chevron-open svg {
+  transform: rotate(180deg);
+}
+
+.rsui-disclosure-sub {
+  padding: 2px 4px;
+}
+
+.rsui-disclosure-sub .rsui-head-title {
+  font-size: 13px;
+  line-height: 20px;
+  font-weight: 500;
+  color: var(--dsw-alias-label-secondary);
+}
+
+/* ------------------------------------------------------------------ */
+/* Collapsible regions — content stays mounted, `hidden` hides it      */
+/* ------------------------------------------------------------------ */
+
+.rsui-region {
+  min-width: 0;
+}
+
+.rsui-region[hidden] {
+  display: none;
+}
+
+.rsui-region-body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+  padding-top: 12px;
+}
+
+.rsui-region-inset .rsui-region-body {
+  padding-top: 8px;
+}
+
+/* ------------------------------------------------------------------ */
+/* Inner cards                                                         */
+/* ------------------------------------------------------------------ */
+
+.rsui-card {
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+  padding: 14px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: var(--rssh-radius-card);
+  background: var(--dsw-alias-bg-layer-1, var(--dsw-alias-bg-layer-2));
+}
+
+.rsui-card-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+  flex-wrap: wrap;
+}
+
+.rsui-card-title-block {
+  display: flex;
+  flex: 1 1 220px;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.rsui-card-title {
+  margin: 0;
+  font-size: 14px;
+  line-height: 20px;
+  font-weight: 600;
+  color: var(--dsw-alias-label-primary);
+  overflow-wrap: anywhere;
+}
+
+.rsui-title-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  flex-wrap: wrap;
+}
+
+.rsui-card-sub {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  min-width: 0;
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--dsw-alias-label-secondary);
+}
+
+.rsui-mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+  min-width: 0;
+}
+
+.rsui-wrap {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  min-width: 0;
+}
+
+.rsui-sep {
+  color: var(--dsw-alias-label-caption);
+}
+
+.rsui-muted {
+  margin: 0;
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--dsw-alias-label-tertiary);
+  overflow-wrap: anywhere;
+}
+
+/* ------------------------------------------------------------------ */
+/* Buttons                                                             */
+/* ------------------------------------------------------------------ */
+
+.rsui-btn {
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  max-width: 100%;
+  min-height: 32px;
+  padding: 0 12px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: var(--rssh-radius-control);
+  background: transparent;
+  color: var(--dsw-alias-label-primary);
+  font: inherit;
+  font-size: 13px;
+  line-height: 18px;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background-color 120ms ease, border-color 120ms ease;
+}
+
+.rsui-btn:hover:not(:disabled) {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.rsui-btn:focus-visible {
+  outline: 2px solid var(--dsw-alias-state-business-primary);
+  outline-offset: 2px;
+}
+
+.rsui-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.rsui-btn-primary {
+  border-color: var(--dsw-alias-button-primary-fill, var(--dsw-alias-state-business-primary));
+  background: var(--dsw-alias-button-primary-fill, var(--dsw-alias-state-business-primary));
+  color: var(--dsw-alias-label-primary-foreground, #ffffff);
+}
+
+.rsui-btn-primary:hover:not(:disabled) {
+  background: var(--dsw-alias-button-primary-hover, var(--dsw-alias-state-business-primary));
+  border-color: var(--dsw-alias-button-primary-hover, var(--dsw-alias-state-business-primary));
+}
+
+.rsui-btn-ghost {
+  border-color: transparent;
+}
+
+.rsui-btn-ghost:hover:not(:disabled) {
+  background: var(--dsw-alias-button-ghost-active-hover, var(--dsw-alias-interactive-bg-hover));
+}
+
+.rsui-btn-outline {
+  border-color: var(--dsw-alias-border-l2);
+  background: transparent;
+}
+
+.rsui-btn-danger {
+  border-color: var(--dsw-alias-state-error-primary);
+  color: var(--dsw-alias-state-error-primary);
+}
+
+.rsui-btn-sm {
+  min-height: 28px;
+  padding: 0 10px;
+  font-size: 12px;
+}
+
+.rsui-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.rsui-add-actions .rsui-btn,
+.rsui-prefs-actions .rsui-btn,
+.rsui-workspace-actions .rsui-btn-primary {
+  min-height: var(--rssh-control-height);
+}
+
+/* ------------------------------------------------------------------ */
+/* Fields                                                              */
+/* ------------------------------------------------------------------ */
+
+.rsui-add-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+
+.rsui-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.rsui-label {
+  font-size: 12px;
+  line-height: 18px;
+  font-weight: 500;
+  color: var(--dsw-alias-label-secondary);
+}
+
+.rsui-input,
+.rsui-select,
+.rsui-textarea {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  min-height: var(--rssh-control-height);
+  margin: 0;
+  padding: 7px 10px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: var(--rssh-radius-control);
+  background: var(--dsw-specific-input-major);
+  color: var(--dsw-alias-label-primary);
+  font: inherit;
+  font-size: 13px;
+  line-height: 20px;
+}
+
+.rsui-input::placeholder,
+.rsui-textarea::placeholder {
+  color: var(--dsw-alias-label-dimmed, var(--dsw-alias-label-tertiary));
+}
+
+.rsui-input:hover,
+.rsui-select:hover,
+.rsui-textarea:hover {
+  border-color: var(--dsw-alias-border-l2);
+}
+
+.rsui-input:focus-visible,
+.rsui-select:focus-visible,
+.rsui-textarea:focus-visible {
+  outline: 2px solid var(--dsw-alias-state-business-primary);
+  outline-offset: 1px;
+  border-color: var(--dsw-alias-state-business-primary);
+}
+
+.rsui-input-invalid {
+  border-color: var(--dsw-alias-state-error-primary);
+}
+
+.rsui-input-mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace;
+}
+
+.rsui-textarea {
+  min-height: 60px;
+  resize: vertical;
+}
+
+.rsui-hint {
+  margin: 0;
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--dsw-alias-label-tertiary);
+  overflow-wrap: anywhere;
+}
+
+.rsui-error-text {
+  margin: 0;
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--dsw-alias-state-error-primary);
+  overflow-wrap: anywhere;
+}
+
+.rsui-form-row {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+}
+
+.rsui-form-row-2 {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+/* ------------------------------------------------------------------ */
+/* Checkboxes                                                          */
+/* ------------------------------------------------------------------ */
+
+.rsui-check {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  min-width: 0;
+}
+
+.rsui-check-input {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  margin: 2px 0 0;
+  accent-color: var(--dsw-alias-state-business-primary);
+  cursor: pointer;
+}
+
+.rsui-check-input:focus-visible {
+  outline: 2px solid var(--dsw-alias-state-business-primary);
+  outline-offset: 2px;
+}
+
+.rsui-check-label {
+  flex: 1;
+  min-width: 0;
+  font-size: 13px;
+  line-height: 20px;
+  color: var(--dsw-alias-label-primary);
+  overflow-wrap: anywhere;
+  cursor: pointer;
+}
+
+/* ------------------------------------------------------------------ */
+/* Divider / subsection                                                */
+/* ------------------------------------------------------------------ */
+
+.rsui-divider {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.rsui-divider::before,
+.rsui-divider::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--dsw-alias-border-l1);
+}
+
+.rsui-divider-label {
+  flex: none;
+  white-space: nowrap;
+}
+
+.rsui-subsection {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+  padding-top: 6px;
+  border-top: 1px solid var(--dsw-alias-border-l1);
+}
+
+/* ------------------------------------------------------------------ */
+/* Feedback blocks (text prefix carries the meaning, not colour only)  */
+/* ------------------------------------------------------------------ */
+
+.rsui-feedback {
+  box-sizing: border-box;
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  min-width: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: var(--rssh-radius-control);
+  background: var(--dsw-alias-markdown-code-block);
+  overflow-wrap: anywhere;
+}
+
+.rsui-feedback-success {
+  border-color: var(--dsw-alias-state-success-primary);
+}
+
+.rsui-feedback-success .rsui-feedback-icon {
+  color: var(--dsw-alias-state-success-primary);
+}
+
+.rsui-feedback-warning {
+  border-color: var(--dsw-alias-state-warning-primary, var(--dsw-alias-label-tertiary));
+}
+
+.rsui-feedback-warning .rsui-feedback-icon {
+  color: var(--dsw-alias-state-warning-primary, var(--dsw-alias-label-secondary));
+}
+
+.rsui-feedback-error {
+  border-color: var(--dsw-alias-state-error-primary);
+}
+
+.rsui-feedback-error .rsui-feedback-icon {
+  color: var(--dsw-alias-state-error-primary);
+}
+
+.rsui-feedback-info .rsui-feedback-icon {
+  color: var(--dsw-alias-label-secondary);
+}
+
+.rsui-feedback-icon {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  margin-top: 2px;
+  color: var(--dsw-alias-label-secondary);
+}
+
+.rsui-feedback-body {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.rsui-feedback-title {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  min-width: 0;
+  font-size: 13px;
+  line-height: 20px;
+  font-weight: 500;
+  color: var(--dsw-alias-label-primary);
+  overflow-wrap: anywhere;
+}
+
+.rsui-feedback-prefix {
+  flex: none;
+  font-weight: 600;
+  color: var(--dsw-alias-label-secondary);
+  white-space: nowrap;
+}
+
+.rsui-feedback-prefix-soft {
+  font-weight: 500;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.rsui-feedback-line {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.rsui-feedback-pre {
+  box-sizing: border-box;
+  max-width: 100%;
+  margin: 0;
+  padding: 6px 8px;
+  border-radius: 8px;
+  background: var(--dsw-specific-input-major);
+  color: var(--dsw-alias-label-secondary);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace;
+  font-size: 12px;
+  line-height: 18px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  min-width: 0;
+}
+
+.rsui-feedback-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding-top: 2px;
+}
+
+/* ------------------------------------------------------------------ */
+/* Inline confirmation (inside a card, no dialog)                      */
+/* ------------------------------------------------------------------ */
+
+.rsui-confirm {
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid var(--dsw-alias-state-error-primary);
+  border-radius: var(--rssh-radius-control);
+  background: var(--dsw-alias-markdown-code-block);
+}
+
+.rsui-confirm-title {
+  margin: 0;
+  font-size: 13px;
+  line-height: 20px;
+  font-weight: 600;
+  color: var(--dsw-alias-label-primary);
+  overflow-wrap: anywhere;
+}
+
+.rsui-confirm-body {
+  margin: 0;
+  font-size: 13px;
+  line-height: 20px;
+  color: var(--dsw-alias-label-secondary);
+  overflow-wrap: anywhere;
+}
+
+/* ------------------------------------------------------------------ */
+/* Status bits                                                         */
+/* ------------------------------------------------------------------ */
+
+.rsui-empty {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 18px 12px;
+  border: 1px dashed var(--dsw-alias-border-l2);
+  border-radius: var(--rssh-radius-control);
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 13px;
+  line-height: 20px;
+  text-align: center;
+  overflow-wrap: anywhere;
+}
+
+.rsui-badge {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  padding: 1px 8px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 999px;
+  background: var(--dsw-alias-button-ghost-active-fill, var(--dsw-alias-interactive-bg-hover));
+  color: var(--dsw-alias-label-secondary);
+  font-size: 11px;
+  line-height: 16px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.rsui-badge-warn {
+  border-color: var(--dsw-alias-state-warning-primary, var(--dsw-alias-border-l2));
+  color: var(--dsw-alias-label-primary);
+}
+
+.rsui-inline-hint {
+  margin: 0;
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--dsw-alias-label-tertiary);
+  overflow-wrap: anywhere;
+}
+
+.rsui-dirty-hint {
+  color: var(--dsw-alias-label-secondary);
+}
+
+/* ------------------------------------------------------------------ */
+/* Advanced groups                                                     */
+/* ------------------------------------------------------------------ */
+
+.rsui-group {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: var(--rssh-radius-control);
+}
+
+.rsui-group-title {
+  margin: 0;
+  font-size: 13px;
+  line-height: 20px;
+  font-weight: 600;
+  color: var(--dsw-alias-label-primary);
+}
+
+/* ------------------------------------------------------------------ */
+/* SSH-config import dialog                                            */
+/* ------------------------------------------------------------------ */
+
+.rsui-modal {
+  width: min(560px, 100%);
+  max-height: min(680px, 100%);
+}
+
+.rsui-import-body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+  max-height: 60vh;
+  overflow-y: auto;
+}
+
+.rsui-import-status {
+  padding: 6px 0;
+}
+
+.rsui-import-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.rsui-import-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  max-height: 40vh;
+  overflow-y: auto;
+  padding: 4px;
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: var(--rssh-radius-control);
+  background: var(--dsw-alias-bg-layer-1, var(--dsw-alias-bg-layer-2));
+}
+
+.rsui-import-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  min-width: 0;
+  padding: 8px;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.rsui-import-row:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.rsui-import-row-text {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  cursor: pointer;
+}
+
+.rsui-import-actions {
+  justify-content: flex-end;
+  padding-top: 4px;
+  border-top: 1px solid var(--dsw-alias-border-l1);
+}
+
+.rsui-import-alias {
+  font-size: 13px;
+  line-height: 18px;
+  font-weight: 600;
+  color: var(--dsw-alias-label-primary);
+  overflow-wrap: anywhere;
+}
+
+.rsui-import-meta {
+  display: flex;
+  gap: 2px;
+  flex-wrap: wrap;
+  min-width: 0;
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--dsw-alias-label-secondary);
+}
+
+.rsui-import-progress {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: var(--dsw-alias-markdown-code-block);
+  color: var(--dsw-alias-label-secondary);
+  font-size: 12px;
+  line-height: 18px;
+  overflow-wrap: anywhere;
+}
+
+.rsui-import-result {
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: var(--rssh-radius-control);
+  background: var(--dsw-alias-bg-layer-1, var(--dsw-alias-bg-layer-2));
+}
+
+.rsui-import-result-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.rsui-import-result-title {
+  font-size: 13px;
+  line-height: 20px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.rsui-tone-success {
+  color: var(--dsw-alias-state-success-primary);
+}
+
+.rsui-tone-warning {
+  color: var(--dsw-alias-label-primary);
+}
+
+.rsui-tone-error {
+  color: var(--dsw-alias-state-error-primary);
+}
+
+.rsui-import-failed-intro {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  min-width: 0;
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--dsw-alias-label-secondary);
+}
+
+.rsui-import-failed {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.rsui-import-failed li {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  padding: 8px 10px;
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 8px;
+  background: var(--dsw-alias-bg-layer-2, transparent);
+}
+
+.rsui-import-failed-host {
+  font-size: 12px;
+  line-height: 18px;
+  font-weight: 500;
+  color: var(--dsw-alias-label-primary);
+  overflow-wrap: anywhere;
+}
+
+.rsui-import-failed-reason {
+  margin: 0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace;
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--dsw-alias-label-secondary);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  min-width: 0;
+}
+
+/* ------------------------------------------------------------------ */
+/* Scoped focus ring + reduced motion + narrow layout                  */
+/* ------------------------------------------------------------------ */
+
+.rsui-root :focus-visible {
+  outline: 2px solid var(--dsw-alias-state-business-primary);
+  outline-offset: 2px;
+}
+
+@media (max-width: 620px) {
+  .rsui-section {
+    padding: 12px;
+  }
+
+  .rsui-page-title {
+    font-size: 18px;
+    line-height: 26px;
+  }
+
+  .rsui-form-row-2 {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .rsui-card-head {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .rsui-card-title-block {
+    flex-basis: auto;
+  }
+
+  .rsui-btn {
+    white-space: normal;
+    text-align: center;
+  }
+
+  .rsui-import-toolbar {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .rsui-chevron svg {
+    transition: none;
+  }
+
+  .rsui-btn {
+    transition: none;
+  }
+}
