@@ -45,6 +45,10 @@ export type WorkspaceGroupsKey =
   | 'folder.mergeAction'
   | 'folder.mergeHint'
   | 'folder.mergeDone'
+  | 'folder.mergeConfirm'
+  | 'folder.mergeRegistrationFailed'
+  | 'folder.removeMemberPrompt'
+  | 'folder.removeMissingPrompt'
   | 'folder.mergeFailed'
   | 'folder.base'
   | 'folder.setRoot'
@@ -238,10 +242,14 @@ export const zh: WorkspaceGroupsDict = {
   'folder.sectionList': '项目文件夹',
   'folder.sectionAdd': '添加文件夹',
   'folder.emptyHint': '还没有额外文件夹。下面挂一个目录，它的会话会独立运行，模型也能直接读到里面的文件。',
-  'folder.mergeTitle': '合并成一个总文件夹',
-  'folder.mergeAction': '生成总文件夹并添加为工作区',
-  'folder.mergeHint': '在旁边建一个目录，用链接把这些文件夹放进去，再注册成工作区。不复制、不移动原文件夹；之后在这个工作区里的会话可以同时读写它们。',
-  'folder.mergeDone': '已生成总文件夹：',
+  'folder.mergeTitle': '新增总目录工作区',
+  'folder.mergeAction': '新增总目录入口',
+  'folder.mergeHint': '为上方文件夹创建链接总目录，并新增一个独立工作区入口。原文件夹、旧工作区和原会话均保留；不会迁移会话或删除旧入口。',
+  'folder.mergeConfirm': '确认将上方列出的文件夹链接到总目录，并注册为独立工作区？旧工作区及会话仍在原处，新入口不包含旧会话。',
+  'folder.mergeDone': '总目录工作区已就绪；旧工作区和会话保留在原处：',
+  'folder.mergeRegistrationFailed': '总目录已创建，但工作区注册失败。保持名称和文件夹不变重试将复用该目录，不会迁移或删除旧工作区：',
+  'folder.removeMemberPrompt': '解除关联后，此文件夹的工作区和会话会保留，并可重新作为独立入口显示（即使没有会话）。不会删除目录或迁移会话。',
+  'folder.removeMissingPrompt': '仅移除此处的失效关联，不会重建工作区，也不会删除目录或会话。',
   'folder.mergeFailed': '生成总文件夹失败',
   'folder.base': '基础文件夹',
   'folder.setRoot': '设为根目录',
@@ -252,9 +260,9 @@ export const zh: WorkspaceGroupsDict = {
   'folder.duplicate': '该文件夹已在此工作区中',
   'folder.conflict': '文件夹已被另一个窗口修改，已同步为最新状态，本次修改未保存，请重试',
   'folder.removeError': '远程工作区删除失败',
-  'folder.removeRemotePrompt': '这个云端文件夹背后有一个工作区，移除时要连它一起删掉吗？删掉后它里面的会话也会消失。',
+  'folder.removeRemotePrompt': '“连工作区一起删”会删除远程记录，并尝试清理未被其他记录共用的工作区注册和本地镜像。会话可能从侧栏隐藏，聊天文件保留；不删除服务器上的原目录。',
   'folder.removeRemoteDelete': '连工作区一起删',
-  'folder.removeRemoteOnly': '只移除文件夹',
+  'folder.removeRemoteOnly': '解除关联，保留工作区',
   'folder.addError': '添加文件夹失败',
   'folder.sessionError': '新建会话失败',
   'folder.saveError': '文件夹保存失败',
@@ -434,10 +442,14 @@ export const en: WorkspaceGroupsDict = {
   'folder.sectionList': 'Project folders',
   'folder.sectionAdd': 'Add a folder',
   'folder.emptyHint': 'No extra folders yet. A folder added below runs its sessions on its own, so the agent can read the files inside it directly.',
-  'folder.mergeTitle': 'Merge into one folder',
-  'folder.mergeAction': 'Create the merged folder as a workspace',
-  'folder.mergeHint': 'Builds one directory that links these folders side by side and registers it as a workspace. Nothing is copied or moved; sessions in that workspace can read and write all of them.',
-  'folder.mergeDone': 'Merged folder created: ',
+  'folder.mergeTitle': 'Add a linked-folder workspace',
+  'folder.mergeAction': 'Add a separate workspace entry',
+  'folder.mergeHint': 'Links the folders above into one directory and adds a separate workspace entry. Original folders, workspaces and sessions stay in place; sessions are not migrated and old entries are not deleted.',
+  'folder.mergeConfirm': 'Link the folders listed above into one directory and register a separate workspace? Existing workspaces and sessions stay in place. The new entry does not contain the old sessions.',
+  'folder.mergeDone': 'Linked-folder workspace ready; existing workspaces and sessions stay in place: ',
+  'folder.mergeRegistrationFailed': 'The linked directory was created, but workspace registration failed. Retrying with the same name and folders reuses it without migrating or deleting existing workspaces: ',
+  'folder.removeMemberPrompt': 'Detaching keeps this folder’s workspace and sessions. It can appear as a separate entry again, even with no sessions. No directory is deleted and no sessions are migrated.',
+  'folder.removeMissingPrompt': 'Remove only this stale association. This does not recreate the workspace or delete directories or sessions.',
   'folder.mergeFailed': 'Could not build the merged folder',
   'folder.base': 'Base folder',
   'folder.setRoot': 'Set as root',
@@ -448,9 +460,9 @@ export const en: WorkspaceGroupsDict = {
   'folder.duplicate': 'That folder is already in this workspace',
   'folder.conflict': 'Folders changed in another window; synced to the latest state, this edit was not saved — please retry',
   'folder.removeError': 'Could not delete the remote workspace',
-  'folder.removeRemotePrompt': 'This cloud folder is backed by its own workspace. Remove the workspace along with it? Its sessions will be deleted too.',
+  'folder.removeRemotePrompt': '“Delete workspace too” deletes the remote record and attempts to clean up its workspace registration and local mirror unless shared by other records. Sessions may disappear from the sidebar, but chat files remain. The original directory on the server is not deleted.',
   'folder.removeRemoteDelete': 'Delete workspace too',
-  'folder.removeRemoteOnly': 'Remove folder only',
+  'folder.removeRemoteOnly': 'Detach and keep workspace',
   'folder.addError': 'Could not add the folder',
   'folder.sessionError': 'Could not start a session',
   'folder.saveError': 'Could not save folders',

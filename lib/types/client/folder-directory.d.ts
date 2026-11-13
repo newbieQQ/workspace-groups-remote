@@ -76,9 +76,9 @@ export declare function listRemoteProfiles(fetchImpl?: typeof fetch): Promise<Re
 export declare function createRemoteFolder(profileId: string, remotePath: string, title?: string, fetchImpl?: typeof fetch): Promise<CreatedRemoteFolder>;
 /**
  * Delete one remote workspace record through the SSH plugin: it removes the
- * record, unregisters the native workspace behind it (that workspace's
- * sessions go with it) and cleans up the mirror — the counterpart of
- * {@link createRemoteFolder}, for when a member folder is removed for good.
+ * record and attempts to unregister its native workspace and clean up its
+ * local mirror unless shared by another record. Session files and the original
+ * remote directory remain; unregistering may hide sessions from the sidebar.
  * @param recordId - remote-ssh record id stored on the member.
  * @param fetchImpl - fetch implementation (tests inject one).
  */

@@ -2,7 +2,7 @@ import type { WorkspaceView } from '@deepseek-ai/dsh-api-workspace-controller/cl
 import { type WorkspaceFolderEntry } from '../core/folders.ts';
 import type { GroupsBrowserProps } from './contract.ts';
 import { type RemoteProfileSummary } from './folder-directory.ts';
-export declare function FoldersDialog({ workspace, entry, t, busy, canOpen, remote, ownerRemotePath, profiles, profilesError, knownWorkspaceIds, onClose, onBuildFarm, onAddFolder, onAddRemote, onAddSubpath, onSetRoot, onRemove, onOpenFolder }: {
+export declare function FoldersDialog({ workspace, entry, t, busy, canOpen, remote, ownerRemotePath, profiles, profilesError, knownWorkspaceIds, initialRemovePath, onClose, onBuildFarm, onAddFolder, onAddRemote, onAddSubpath, onSetRoot, onRemove, onOpenFolder }: {
     workspace: WorkspaceView;
     entry: WorkspaceFolderEntry | undefined;
     t: GroupsBrowserProps['t'];
@@ -17,6 +17,8 @@ export declare function FoldersDialog({ workspace, entry, t, busy, canOpen, remo
     profilesError: string | null;
     /** Live workspace ids, so a member whose workspace is gone can say so. */
     knownWorkspaceIds: readonly string[];
+    /** Sidebar removal opens this same confirmation instead of bypassing it. */
+    initialRemovePath?: string | null;
     onClose: () => void;
     /**
      * Gather this project's folders into one link directory and register it as a
