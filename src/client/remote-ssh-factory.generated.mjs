@@ -13,8 +13,11 @@
 // --- merged-bundle transform (scripts/build-remote-ssh-client.mjs) ---
 // Upstream registers this factory under its own package id; the merged
 // package registers ONE client row, so the factory is exported instead
-// and applied by src/client/index.ts. Body below is upstream-verbatim.
-export default (require) => {
+// and applied by src/client/index.ts. Body below is upstream-verbatim
+// apart from anchor-asserted patches (root label, settings face).
+// The second argument is the merged entry's compose seam:
+//   compose.settingsNamespace + compose.createSettingsSection(deps)
+export default (require, compose) => {
     var module = { exports: {} };
     var exports = module.exports;
     var React = require("react");
@@ -1956,14 +1959,32 @@ export default (require) => {
       });
 
       if (slots) {
+        // [workspace-groups-remote patch] Settings face replacement:
+        // the maintainable source component (src/client/rssh-settings) owns
+        // the page; allocate it once per registration and keep upstream's
+        // SettingsSection as the fallback when compose is absent. The
+        // dictionary namespace comes from compose so the slot renderer
+        // injects the component's typed `t` seat from this bundle's own
+        // locale registration.
         slots.inject("settings.section", function () {
+          var settingsComponent = SettingsSection;
+          var settingsLocale = NS;
+          try {
+            if (compose && typeof compose.createSettingsSection === "function") {
+              settingsComponent = compose.createSettingsSection({ api: api });
+              if (compose.settingsNamespace) settingsLocale = String(compose.settingsNamespace);
+            }
+          } catch (error) {
+            settingsComponent = SettingsSection;
+            settingsLocale = NS;
+          }
           return slots.register({
             name: "settings.section",
             id: "remote-ssh",
             order: 200,
             label: function () { return i18n.t("settings.nav"); },
-            locale: NS
-          }, SettingsSection);
+            locale: settingsLocale
+          }, settingsComponent);
         });
 
         // 接管原生「添加工作区」流程：用明显更低的优先级覆盖内置的本地目录选择器，

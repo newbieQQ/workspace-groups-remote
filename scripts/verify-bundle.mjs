@@ -39,6 +39,8 @@ check('client has exactly one module-loader registration', client.split('__Modul
 check('client row id is the package name', client.includes(`id: "${pkg.name}"`) || client.includes(`id:"${pkg.name}"`) || client.includes(`id: '${pkg.name}'`))
 check('client contains the groups half', client.includes('workspaceGroups'))
 check('client contains the remote-ssh half', client.includes('remssh'))
+check('client ships the maintainable remote-ssh settings face', client.includes('dsh-remote-ssh-settings') && client.includes('rsui-root'))
+check('client carries the settings-face compose seam', client.includes('createSettingsSection') && client.includes('settingsNamespace'))
 
 const remoteHost = readFileSync(join(root, 'lib/remote-ssh/index.js'), 'utf8')
 const vendorHost = readFileSync(join(root, 'vendor/dsh-remote-ssh/lib/index.js'), 'utf8')

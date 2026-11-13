@@ -1,0 +1,97 @@
+{
+  "isolatedPreview": true,
+  "note": "真实组件 + 假 /remote-ssh/api 数据，在 headless Chrome 中渲染截图；不是 AI 效果图，未修改 DSH GUI / daily profile / node_modules。",
+  "component": "src/client/rssh-settings/index.tsx",
+  "screenshots": [
+    {
+      "file": "screenshots/remote-ssh-settings/01-default.png",
+      "scene": "default",
+      "theme": "light",
+      "viewportWidth": 1280,
+      "capture": "full",
+      "size": "1280x1605",
+      "durationMs": 1003,
+      "description": "默认（高级设置收起）"
+    },
+    {
+      "file": "screenshots/remote-ssh-settings/02-expanded.png",
+      "scene": "expanded",
+      "theme": "light",
+      "viewportWidth": 1280,
+      "capture": "full",
+      "size": "1280x3529",
+      "durationMs": 2163,
+      "description": "全部展开（字段可核对）"
+    },
+    {
+      "file": "screenshots/remote-ssh-settings/03-import-dialog.png",
+      "scene": "import-ready",
+      "theme": "light",
+      "viewportWidth": 1280,
+      "capture": "viewport",
+      "size": "1280x900",
+      "durationMs": 1297,
+      "description": "SSH 导入弹窗（列表 / 已选数量）"
+    },
+    {
+      "file": "screenshots/remote-ssh-settings/04-import-partial.png",
+      "scene": "import-partial",
+      "theme": "light",
+      "viewportWidth": 1280,
+      "capture": "viewport",
+      "size": "1280x900",
+      "durationMs": 2224,
+      "description": "导入部分失败结果 + 仅重试失败项"
+    },
+    {
+      "file": "screenshots/remote-ssh-settings/05-workspaces.png",
+      "scene": "workspaces",
+      "theme": "light",
+      "viewportWidth": 1280,
+      "capture": "full",
+      "size": "1280x2861",
+      "durationMs": 1541,
+      "description": "远程工作区独立配置展开 + 未保存徽标"
+    },
+    {
+      "file": "screenshots/remote-ssh-settings/06-password-auth.png",
+      "scene": "password",
+      "theme": "light",
+      "viewportWidth": 1280,
+      "capture": "full",
+      "size": "1280x1605",
+      "durationMs": 1564,
+      "description": "密码认证表单"
+    },
+    {
+      "file": "screenshots/remote-ssh-settings/07-dark.png",
+      "scene": "expanded",
+      "theme": "dark",
+      "viewportWidth": 1280,
+      "capture": "full",
+      "size": "1280x3529",
+      "durationMs": 2127,
+      "description": "深色模式（全部展开）"
+    },
+    {
+      "file": "screenshots/remote-ssh-settings/08-narrow.png",
+      "scene": "default",
+      "theme": "light",
+      "viewportWidth": 480,
+      "capture": "full",
+      "size": "480x1890",
+      "durationMs": 1313,
+      "description": "窄屏约 480px 单列"
+    },
+    {
+      "file": "screenshots/remote-ssh-settings/09-test-failure.png",
+      "scene": "test-failure",
+      "theme": "light",
+      "viewportWidth": 1280,
+      "capture": "full",
+      "size": "1280x1769",
+      "durationMs": 1395,
+      "description": "连接测试失败诊断"
+    }
+  ]
+}

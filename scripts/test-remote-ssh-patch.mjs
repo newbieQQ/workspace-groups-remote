@@ -381,5 +381,22 @@ console.log('patch hygiene')
 check(!vendorSrc.includes('resolveRemoteCanonical'), 'vendor tree stays pristine (no patch markers)')
 check(src.includes('resolveRemoteCanonical'), 'built artifact carries the patch')
 
+// --- client transform: settings face replacement ---------------------------
+// scripts/build-remote-ssh-client.mjs replaces the vendored settings face
+// with the maintainable source component and exports the factory with the
+// merged entry's compose seam. Assert the generated source rather than only
+// the built bundle, so an upstream anchor drift is caught here too.
+console.log('client factory transform (settings face)')
+{
+  const generated = readFileSync(join(root, 'src/client/remote-ssh-factory.generated.mjs'), 'utf8')
+  check(generated.includes('export default (require, compose) => {'), 'generated factory accepts the compose seam')
+  check(generated.includes('compose.createSettingsSection({ api: api })'), 'settings registration builds the source component')
+  check(generated.includes('settingsComponent = SettingsSection;'), 'vendored settings face stays as the fallback')
+  check(!generated.includes('}, SettingsSection);'), 'upstream registration is gone from the generated factory')
+  check(generated.includes('locale: settingsLocale'), 'settings entry declares the compose-provided namespace')
+  const vendoredClient = readFileSync(join(root, 'vendor/dsh-remote-ssh/lib/client.js'), 'utf8')
+  check(!vendoredClient.includes('compose.createSettingsSection'), 'vendored client stays pristine')
+}
+
 console.log('\n' + pass + ' passed, ' + fail + ' failed')
 process.exit(fail === 0 ? 0 : 1)

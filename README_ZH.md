@@ -34,6 +34,18 @@ DeepSeek Harness 工作区分组插件。基于 [z-col/dsh-workspace-groups](htt
 
 `lib/index.js`（源文件 `bundle/index.js`）只做组合：在同一 fiber 上加载两个插件。`cordis.patch.yml` 只插入一行，并原样保留 remote-ssh 对 `better-sidebar` / `terminal-controller` 的 shell 覆盖。
 
+### Remote-SSH 设置页（1.3.0）
+
+设置页由本仓库可维护源码组件提供（`src/client/rssh-settings/`），构建期由 `scripts/build-remote-ssh-client.mjs` 按锚点断言替换上游编译产物中的设置小节，vendor 树保持原样。页面为「我的连接 / 添加连接 / 远程工作区 / 高级设置」四个分区；远程工作区与高级设置默认收起，折叠只改变可见性，不清空草稿、不触发保存，收起的高级设置不显示内部保存按钮。
+
+- **我的连接**：每卡独立测试（成功 / 成功带 warning / 失败与诊断分别显示），删除前卡内确认并明确连接名与影响范围。
+- **添加连接**：保留全部字段与条件显示（密钥显示私钥路径、密码显示遮罩输入并隐藏私钥路径），端口非法明确报错而不是静默回退 22；ProxyJump 收进默认收起的「更多连接选项」。
+- **从系统 SSH 配置导入**：多选弹窗，逐项检查保存结果，分别统计成功 / 失败，部分失败可只重试失败项（成功项不重复提交）。
+- **远程工作区**：每个工作区独立写回、写回排除、同步范围、同步排除与体积上限（GiB），按工作区 ID 保存；有未保存设置时拉取 / 推送会被阻止并提示先保存。
+- **高级设置**：终端 node 路径、写回策略与新工作区同步默认值；与工作区独立配置分开读写，互不覆盖。
+
+新文案使用独立的 `dsh-remote-ssh-settings` 命名空间（中英文），样式限定在 `.rsui-root` 之下，不污染其它插件。
+
 ### 安装 / 迁移
 
 1. 从 profile 里移除旧的两个 bundle（`workspace-groups-local` 与 `@zhangfengshun/dsh-remote-ssh`）。
@@ -60,7 +72,7 @@ vendor 里的上游测试也能原地跑（需先让其依赖可解析：在仓�
 
 ### 维护
 
-vendor 代码不是 fork：更新 remote-ssh 时，把 `vendor/dsh-remote-ssh/` 换成新版上游树，跑 `npm run vendor:manifest` 重新记录其 sha256 指纹清单，再重新构建；客户端提取脚本带锚点断言，上游若改了 bundle 包裹形式会直接报错。vendor 之外的本地改动：`src/client/GroupsBrowser.tsx` 把可空 ref 的判断改成显式写法（`pending !== null && ...`），因为 fork 的 `tsc` 类型步骤不接受可选链写法，语义不变；以及上文的防重复成员检查（`src/core/folders.ts`、`addRemoteFolderTo`）。宿主补丁脚本同样带锚点断言，上游改动锚点代码时会直接报错。
+vendor 代码不是 fork：更新 remote-ssh 时，把 `vendor/dsh-remote-ssh/` 换成新版上游树，跑 `npm run vendor:manifest` 重新记录其 sha256 指纹清单，再重新构建；客户端提取脚本带锚点断言，上游若改了 bundle 包裹形式会直接报错。设置页替换同样带锚点断言：上游设置小节的结构一旦变化，构建会失败而不是静默沿用旧界面。vendor 之外的本地改动：`src/client/GroupsBrowser.tsx` 把可空 ref 的判断改成显式写法（`pending !== null && ...`），因为 fork 的 `tsc` 类型步骤不接受可选链写法，语义不变；以及上文的防重复成员检查（`src/core/folders.ts`、`addRemoteFolderTo`）。宿主补丁脚本同样带锚点断言，上游改动锚点代码时会直接报错。
 
 ## 预览
 
