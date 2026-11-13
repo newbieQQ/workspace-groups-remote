@@ -13,7 +13,7 @@
  * swaps to the remote tree, so no stacked overlays are needed and the current
  * location stays readable at the top.
  */
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import {
   Button,
   IconFolderOpenOutlineRegular,
@@ -44,7 +44,7 @@ function subfolderOf(root: string | null, picked: string): string | null {
   return picked.startsWith(`${base}/`) ? picked.slice(base.length + 1) : null
 }
 
-export function FoldersDialog({ workspace, entry, t, busy, canOpen, remote, ownerRemotePath, profiles, profilesError, knownWorkspaceIds, onClose, onBuildFarm, onAddFolder, onAddRemote, onAddSubpath, onSetRoot, onRemove, onOpenFolder }: {
+export function FoldersDialog({ workspace, entry, t, busy, canOpen, remote, ownerRemotePath, profiles, profilesError, knownWorkspaceIds, initialRemovePath, onClose, onBuildFarm, onAddFolder, onAddRemote, onAddSubpath, onSetRoot, onRemove, onOpenFolder }: {
   workspace: WorkspaceView
   entry: WorkspaceFolderEntry | undefined
   t: GroupsBrowserProps['t']
@@ -59,6 +59,8 @@ export function FoldersDialog({ workspace, entry, t, busy, canOpen, remote, owne
   profilesError: string | null
   /** Live workspace ids, so a member whose workspace is gone can say so. */
   knownWorkspaceIds: readonly string[]
+  /** Sidebar removal opens this same confirmation instead of bypassing it. */
+  initialRemovePath?: string | null
   onClose: () => void
   /**
    * Gather this project's folders into one link directory and register it as a
@@ -77,8 +79,11 @@ export function FoldersDialog({ workspace, entry, t, busy, canOpen, remote, owne
   const folders = effectiveFolders(workspace.path, entry)
   const root = rootOf(workspace.path, entry)
   const [addMode, setAddMode] = useState<AddMode>('local')
-  // Path of the remote member whose removal awaits the delete-record choice.
-  const [confirmRemovePath, setConfirmRemovePath] = useState<string | null>(null)
+  // All members keep their workspace when detached, including local members.
+  const [confirmRemovePath, setConfirmRemovePath] = useState<string | null>(initialRemovePath ?? null)
+  const [confirmFarm, setConfirmFarm] = useState(false)
+  const farmConfirmation = useRef(false)
+  useEffect(() => { setConfirmRemovePath(initialRemovePath ?? null) }, [initialRemovePath])
   const [profileId, setProfileId] = useState('')
   const [remotePath, setRemotePath] = useState('')
   const [browsing, setBrowsing] = useState(false)
@@ -232,9 +237,8 @@ export function FoldersDialog({ workspace, entry, t, busy, canOpen, remote, owne
                         className="wgIconButton"
                         aria-label={`${t('folder.remove')} ${label}`}
                         onClick={() => {
-                          // A remote member can take its backing workspace
-                          // with it; ask which removal the user means first.
-                          if (canDeleteRecord) setConfirmRemovePath(path)
+                          // Detaching exposes the backing workspace as its own row.
+                          if (member !== undefined) setConfirmRemovePath(path)
                           else onRemove(path, false)
                         }}
                       >
@@ -245,16 +249,17 @@ export function FoldersDialog({ workspace, entry, t, busy, canOpen, remote, owne
                 </div>
                 {confirmRemovePath === path && (
                   <div className="wgFolderConfirm" role="alert">
-                    <span className="wgFolderConfirmText">{t('folder.removeRemotePrompt')}</span>
+                    <span className="wgFolderConfirmText">{t(memberGone ? 'folder.removeMissingPrompt' : 'folder.removeMemberPrompt')}</span>
+                    {canDeleteRecord && <span className="wgFolderConfirmText">{t('folder.removeRemotePrompt')}</span>}
                     <span className="wgFolderConfirmActions">
-                      <button
+                      {canDeleteRecord && <button
                         type="button"
                         className="wgFolderConfirmButton"
                         data-tone="danger"
                         onClick={() => { setConfirmRemovePath(null); onRemove(path, true) }}
                       >
                         {t('folder.removeRemoteDelete')}
-                      </button>
+                      </button>}
                       <button
                         type="button"
                         className="wgFolderConfirmButton"
@@ -285,11 +290,29 @@ export function FoldersDialog({ workspace, entry, t, busy, canOpen, remote, owne
             {/* A session's file scope is its workspace directory, so folders in
                 different places are unreachable from one session. A farm puts
                 them side by side as links; nothing is copied or moved. */}
-            <button type="button" className="wgFolderPick" disabled={busy} onClick={onBuildFarm}>
+            <button type="button" className="wgFolderPick" disabled={busy} onClick={() => { farmConfirmation.current = true; setConfirmFarm(true) }}>
               <span className="wgFolderPickPlus" aria-hidden>⇄</span>
               <span>{t('folder.mergeAction')}</span>
             </button>
             <p className="wgFolderHint">{t('folder.mergeHint')}</p>
+            {confirmFarm && (
+              <div className="wgFolderConfirm" role="alert">
+                <span className="wgFolderConfirmText">{t('folder.mergeConfirm')}</span>
+                <span className="wgFolderConfirmActions">
+                  <button type="button" className="wgFolderConfirmButton" disabled={busy}
+                    onClick={() => {
+                      if (!farmConfirmation.current || busy) return
+                      farmConfirmation.current = false
+                      setConfirmFarm(false)
+                      onBuildFarm()
+                    }}>
+                    {t('folder.mergeAction')}
+                  </button>
+                  <button type="button" className="wgFolderConfirmButton" disabled={busy}
+                    onClick={() => { farmConfirmation.current = false; setConfirmFarm(false) }}>{t('cancel')}</button>
+                </span>
+              </div>
+            )}
           </section>
         )}
 

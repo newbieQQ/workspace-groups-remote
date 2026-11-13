@@ -20,7 +20,7 @@ Upstream's `createRemoteWorkspace` matched existing records by the raw `remotePa
 - **Host (build-time patch, `scripts/patch-remote-ssh.mjs`)**: registration compares light-normalized spellings first; on a miss it resolves the path once over SSH (`pwd -P` + `$HOME`) and compares canonical forms, storing the canonical spelling. Resolution failures are fail-open (creation proceeds as upstream). Behavior is covered by `npm run test:patch`; the vendored tree stays pristine, so upstream updates still drop in.
 - **Client (groups)**: adding a cloud folder also refuses when an existing member is backed by the same workspace, or names the same connection + remote directory, regardless of mirror paths.
 
-Already-duplicated projects are not merged automatically (sessions belong to their workspace); remove the duplicate member from the folder dialog once its session is no longer needed — that deletes the duplicate record with it.
+Already-duplicated projects are not merged automatically (sessions belong to their workspace). Detaching a member keeps its backing workspace. Deleting the duplicate remote record requires the separate explicit “Delete workspace too” choice; review the affected entry before using it.
 
 ### Security hardening (also in the patch set)
 
@@ -92,6 +92,10 @@ For Web, replace `desktop` with `web`. Fully restart DSH or the corresponding We
 1. Click **New Group** in the workspace header, then drag projects into it.
 2. Use the `⋯` menu on a project or group to manage grouping, appearance, and folders.
 3. Open **Folders…** on a project to attach folders or choose its default root.
+
+**Add a linked-folder workspace** creates a separate entry after confirmation. Existing workspaces and sessions stay in place; it does not migrate sessions or remove old entries. If registration fails after the directory is created, the error identifies that directory; retrying with the same name and folders reuses its verified links.
+
+Detaching a member folder keeps its backing workspace and sessions, so that workspace can appear independently again, even when empty. Both the sidebar and folder dialog ask for this decision. No automatic cleanup is inferred from an empty sidebar count: existing records do not reliably distinguish plugin-created members from independently registered workspaces. Remote record deletion remains a separate explicit choice; it attempts to clean up an unshared local mirror and registration, while session files and the original server directory remain.
 
 For automatic grouping by path or name, see [workspace-groups.example.yaml](./workspace-groups.example.yaml) and configure `~/.dsh/workspace-groups.yaml`. Manual grouping works without this file.
 

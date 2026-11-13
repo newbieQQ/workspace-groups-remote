@@ -932,7 +932,9 @@ export function GroupsBrowser({
   const foldersOwnerRequest = useRef('')
 
   /** Open the folder dialog and learn the owner's remote root (cloud owners only). */
+  const [folderRemovalPath, setFolderRemovalPath] = useState<string | null>(null)
   const openFoldersFor = (workspaceId: string): void => {
+    setFolderRemovalPath(null)
     foldersOwnerRequest.current = workspaceId
     setFoldersTarget(workspaceId as WorkspaceId)
     setFoldersOwnerRemote(null)
@@ -1153,8 +1155,9 @@ export function GroupsBrowser({
    * workspace, so one session reaches all of them. The folders themselves are
    * never copied, moved or deleted; the farm holds links only.
    */
+  const farmCreating = useRef(false)
   const buildFarmFor = async (workspaceId: WorkspaceId): Promise<void> => {
-    if (foldersBusy) return
+    if (foldersBusy || farmCreating.current) return
     const workspace = workspaces.find(item => item.workspaceId === workspaceId)
     if (workspace === undefined) return
     const folders = effectiveFolders(workspace.path, entryFor(foldersDoc, workspaceId as string))
@@ -1162,16 +1165,22 @@ export function GroupsBrowser({
       notifyFolder(t('folder.emptyHint'))
       return
     }
+    farmCreating.current = true
     setFoldersBusy(true)
     try {
       const farm = await buildFarm(workspace.title, folders)
-      // Registering the farm is a separate step: a created directory without a
-      // workspace is harmless, and the error still names what already exists.
-      await createWorkspace({ path: farm.path })
+      try {
+        await createWorkspace({ path: farm.path })
+      } catch (reason) {
+        // Keep the verified links: the host reuses the same farm on retry.
+        notifyFolder(`${t('folder.mergeRegistrationFailed')} ${farm.path}: ${reason instanceof Error ? reason.message : String(reason)}`)
+        return
+      }
       notifyFolder(`${t('folder.mergeDone')} ${farm.path}`)
     } catch (reason) {
       notifyFolder(`${t('folder.mergeFailed')}: ${reason instanceof Error ? reason.message : String(reason)}`)
     } finally {
+      farmCreating.current = false
       setFoldersBusy(false)
     }
   }
@@ -1179,14 +1188,20 @@ export function GroupsBrowser({
   /**
    * Remove one folder from a project. With `deleteRecord` set — only the
    * folder dialog offers it, behind an explicit confirm — a remote member's
-   * backing record is deleted through the SSH plugin as well (record, native
-   * workspace and mirror go away, sessions included); without it the removal
+   * backing record is deleted through the SSH plugin as well (unshared native
+   * registration and local mirror cleanup is attempted; session files remain).
+   * Without it the removal
    * is overlay-only and the workspace survives as its own project. If the
    * record deletion fails, the member stays so the user can retry.
    */
-  const removeFolderFrom = (workspaceId: WorkspaceId, path: string, deleteRecord = false): void => {
+  const removeFolderFrom = (workspaceId: WorkspaceId, path: string, deleteRecord = false, confirmed = false): void => {
     const entry = entryFor(foldersDoc, workspaceId as string)
     const member = memberOf(entry, path)
+    if (member !== undefined && !confirmed) {
+      openFoldersFor(workspaceId as string)
+      setFolderRemovalPath(path)
+      return
+    }
     if (deleteRecord && member?.kind === 'remote' && member.recordId !== undefined && member.recordId !== '') {
       const recordId = member.recordId
       void (async () => {
@@ -2290,11 +2305,12 @@ export function GroupsBrowser({
             profiles={remoteProfiles}
             profilesError={remoteProfilesError}
             knownWorkspaceIds={workspaces.map(w => w.workspaceId as string)}
+            initialRemovePath={folderRemovalPath}
             onAddFolder={() => { void addFolderTo(foldersTarget) }}
             onAddRemote={(profileId, remotePath) => addRemoteFolderTo(foldersTarget, profileId, remotePath)}
             onAddSubpath={(relative) => addSubpathTo(foldersTarget, relative)}
             onSetRoot={(path) => { setFolderRoot(foldersTarget, path) }}
-            onRemove={(path, deleteRecord) => { removeFolderFrom(foldersTarget, path, deleteRecord) }}
+            onRemove={(path, deleteRecord) => { removeFolderFrom(foldersTarget, path, deleteRecord, true) }}
             onOpenFolder={(path) => { openFolderPath?.(path) }}
             onClose={() => { foldersOwnerRequest.current = ''; setFoldersTarget(null) }}
           />
